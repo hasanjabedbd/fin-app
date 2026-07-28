@@ -195,6 +195,13 @@
     body{ background:#fff; color:#111; }
     .rpt-page{ page-break-after:always; }
     .rpt-cover{ page-break-after:always; }
+    .rpt-table thead th{background:#F3EFE1;color:#5c5346;border-bottom-color:#1B4332;}
+    .rpt-table td{border-bottom-color:#EAE3D2;color:#26201A;}
+    .rpt-table tbody tr:nth-child(even) td{background:#FBFAF4;}
+    .rpt-kv{border-color:#E4DCC6;}
+    .rpt-kv td{border-bottom-color:#EDE6D3;color:#26201A;}
+    .rpt-kv tr.total td,.rpt-table tr.rpt-total td{background:#F3EFE1;color:#26201A;border-top-color:#C9BE9E;}
+    .rpt-table tr.rpt-grand td{background:#1B4332;color:#fff;}
     @page{ margin:14mm; }
   }
   .rpt-doc{max-width:720px;margin:0 auto;color:#26201A;}
@@ -217,19 +224,19 @@
   .rpt-empty{font-size:13px;color:#7a7264;font-style:italic;}
   .rpt-footer{font-size:11px;color:#a49a89;text-align:center;padding:16px;border-top:1px solid #E4DCC6;margin-top:10px;}
   .rpt-table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:6px;}
-  .rpt-table thead th{background:#F3EFE1;color:#5c5346;font-weight:700;font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;padding:8px 8px;border-bottom:1.5px solid #1B4332;text-align:left;}
-  .rpt-table td{border-bottom:1px solid #EAE3D2;padding:7px 8px;text-align:left;}
-  .rpt-table tbody tr:nth-child(even) td{background:#FBFAF4;}
+  .rpt-table thead th{background:var(--hover);color:var(--muted);font-weight:700;font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;padding:8px 8px;border-bottom:1.5px solid var(--green);text-align:left;}
+  .rpt-table td{border-bottom:1px solid var(--border);padding:7px 8px;text-align:left;color:var(--ink);}
+  .rpt-table tbody tr:nth-child(even) td{background:var(--hover);}
   .rpt-table td.num, .rpt-table th.num{text-align:right;font-family:var(--mono);}
   /* Summary key-value tables (no header row) */
-  .rpt-kv{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px;border:1px solid #E4DCC6;border-radius:8px;overflow:hidden;}
-  .rpt-kv td{padding:9px 12px;border-bottom:1px solid #EDE6D3;}
+  .rpt-kv{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px;border:1px solid var(--border);border-radius:8px;overflow:hidden;}
+  .rpt-kv td{padding:9px 12px;border-bottom:1px solid var(--border);color:var(--ink);}
   .rpt-kv tr:last-child td{border-bottom:none;}
   .rpt-kv td.num{text-align:right;font-family:var(--mono);}
-  .rpt-kv tr.total td{background:#F3EFE1;font-weight:700;}
-  .rpt-table tr.rpt-total td{background:#F3EFE1;font-weight:700;border-top:1.5px solid #C9BE9E;}
-  .rpt-table tr.rpt-grand td{background:#1B4332;color:#fff;font-weight:700;font-size:14px;}
-  .rpt-table tr.rpt-grand td.num{color:#fff !important;}
+  .rpt-kv tr.total td{background:var(--hover);font-weight:700;}
+  .rpt-table tr.rpt-total td{background:var(--hover);font-weight:700;border-top:1.5px solid var(--border2);}
+  .rpt-table tr.rpt-grand td{background:var(--green);color:var(--on-primary);font-weight:700;font-size:14px;}
+  .rpt-table tr.rpt-grand td.num{color:var(--on-primary) !important;}
   .rpt-note{font-size:11px;color:#8a8272;font-style:italic;margin-top:12px;}
 </style>
 </head>
@@ -265,6 +272,26 @@ function setTheme(id){
   state.theme = id;
   applyTheme(id);
 }
+
+/* ---------------- admin safety lock ---------------- */
+const ADMIN_PASS_KEY = "ledger-admin-pass-hash";
+function simpleHash(text){
+  let h = 2166136261;
+  for(let i=0;i<text.length;i++){ h ^= text.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return (h>>>0).toString(16);
+}
+function hasAdminPassword(){ try{ return !!localStorage.getItem(ADMIN_PASS_KEY); }catch(e){ return false; } }
+function verifyAdminPassword(pass){ try{ return localStorage.getItem(ADMIN_PASS_KEY) === simpleHash(pass); }catch(e){ return false; } }
+function requireAdminPassword(reason){
+  if(!hasAdminPassword()) return true;
+  const pass = prompt((reason || "This change") + " requires administrator password.");
+  if(pass===null) return false;
+  if(verifyAdminPassword(pass)) return true;
+  alert("Wrong administrator password.");
+  return false;
+}
+function setAdminPassword(pass){ localStorage.setItem(ADMIN_PASS_KEY, simpleHash(pass)); }
+function clearAdminPassword(){ localStorage.removeItem(ADMIN_PASS_KEY); }
 
 function uid(){ return (crypto.randomUUID ? crypto.randomUUID() : 'id-'+Date.now()+'-'+Math.random().toString(16).slice(2)); }
 function taka(n){ const sign = n<0?"-":""; const v = Math.abs(n).toLocaleString("en-IN",{maximumFractionDigits:2}); return sign+"৳"+v; }
@@ -1400,6 +1427,7 @@ function render(){
           <button class="backup-link" style="float:none;margin:0;opacity:${cloud.db?1:0.7}" id="sync-now-btn" data-action="manual-sync">${syncButtonLabel()}</button>
           <button class="backup-link" style="float:none;margin:0;" data-action="open-modal" data-modal="report">Report</button>
           <button class="backup-link" style="float:none;margin:0;" data-action="open-modal" data-modal="theme">🎨 Theme</button>
+          <button class="backup-link" style="float:none;margin:0;" data-action="open-modal" data-modal="security">Security</button>
           <button class="backup-link" style="float:none;margin:0;" data-action="open-backup">Backup</button>
         </div>
         <div class="eyebrow">🏛️ My Ledger</div>
@@ -1625,7 +1653,7 @@ function renderAccountStatementTable(from, to, bankId){
           return `<tr><td>${t.date}</td><td>${esc(e.details||"Transaction")}</td><td class="num">${e.debit?taka(e.debit):"—"}</td><td class="num">${e.credit?taka(e.credit):"—"}</td><td class="num">${taka(running)}</td></tr>`;
         }).join("")}
         <tr class="rpt-total"><td colspan="2">Totals</td><td class="num">${taka(totalDebit)}</td><td class="num">${taka(totalCredit)}</td><td class="num">—</td></tr>
-        <tr class="rpt-grand"><td colspan="4" style="background:var(--green);color:var(--bg);font-weight:700;">Closing Balance</td><td class="num" style="background:var(--green);color:var(--bg);font-weight:700;">${taka(running)}</td></tr>
+        <tr class="rpt-grand"><td colspan="4" style="background:var(--green);color:var(--on-primary);font-weight:700;">Closing Balance</td><td class="num" style="background:var(--green);color:var(--on-primary);font-weight:700;">${taka(running)}</td></tr>
       </tbody>
     </table>
     ${rows.length===0 ? `<p class="rpt-note">No transactions found for this account in the selected date range.</p>` : ""}
@@ -1899,8 +1927,9 @@ function renderModal(){
   else if(m.type==="report") { title="Report"; body = reportForm(m.from || (monthKey(todayStr())+"-01"), m.to || todayStr()); }
   else if(m.type==="cloud") { title="Cloud Sync"; body = cloudForm(); }
   else if(m.type==="theme") { title="Choose a Theme"; body = themeForm(); }
+  else if(m.type==="security") { title="Administrator Password"; body = securityForm(); }
 
-  const wide = m.type==="report" ? "max-width:720px;" : (m.type==="textexport" || m.type==="cloud") ? "max-width:560px;" : "";
+  const wide = m.type==="report" ? "max-width:720px;" : (m.type==="textexport" || m.type==="cloud" || m.type==="security") ? "max-width:560px;" : "";
   return `<div class="modal-overlay" data-action="close-modal-overlay">
     <div class="modal-box" style="${wide}">
       <div class="modal-head"><h3 class="modal-title" style="word-break:break-all;">${esc(title)}</h3><button class="modal-close" data-action="close-modal">${ICON.x}</button></div>
@@ -1935,6 +1964,27 @@ function cloudForm(){
     <button type="submit" class="btn-submit">Connect</button>
     <div id="cloud-connect-error" style="font-size:12.5px;color:var(--red);"></div>
   </form>`;
+}
+function securityForm(){
+  const enabled = hasAdminPassword();
+  return `<div style="display:flex;flex-direction:column;gap:12px;">
+    <p style="font-size:13px;color:var(--muted);margin:0;">Protect edit and delete actions with a local administrator password.</p>
+    <div class="card" style="padding:12px;">
+      <div style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;font-weight:700;">Status</div>
+      <div style="font-size:14.5px;font-weight:600;margin-top:4px;color:${enabled?'var(--green)':'var(--red)'};">${enabled?'Password enabled':'No password set'}</div>
+    </div>
+    <label class="field">New Password
+      <input id="admin-pass1" type="password" placeholder="Enter new password" />
+    </label>
+    <label class="field">Confirm New Password
+      <input id="admin-pass2" type="password" placeholder="Repeat new password" />
+    </label>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button class="btn-submit" style="flex:1;min-width:160px;" data-action="save-admin-password">Save Password</button>
+      <button class="btn-outline" style="flex:1;min-width:160px;justify-content:center;" data-action="clear-admin-password">Remove Password</button>
+    </div>
+    <p style="font-size:12px;color:var(--muted);margin:0;">If no password is set, edit/delete actions work normally. This is stored only on this device.</p>
+  </div>`;
 }
 function themeForm(){
   const current = state.theme || "classic";
@@ -2153,10 +2203,27 @@ function attachHandlers(){
     else if(action==="open-modal"){ state.modal = { type: el.dataset.modal }; render(); setupModalExtras(); }
     else if(action==="open-backup"){ state.modal = { type: "backup" }; render(); }
     else if(action==="set-theme"){ setTheme(el.dataset.themeId); render(); }
+    else if(action==="save-admin-password"){
+      const p1 = document.getElementById("admin-pass1").value;
+      const p2 = document.getElementById("admin-pass2").value;
+      if(!p1){ alert("Please enter a password."); return; }
+      if(p1!==p2){ alert("Passwords do not match."); return; }
+      if(hasAdminPassword() && !requireAdminPassword("Change administrator password")) return;
+      setAdminPassword(p1);
+      alert("Administrator password saved.");
+      state.modal = { type:"security" }; render();
+    }
+    else if(action==="clear-admin-password"){
+      if(!hasAdminPassword()){ alert("No administrator password is set."); return; }
+      if(!requireAdminPassword("Remove administrator password")) return;
+      clearAdminPassword();
+      alert("Administrator password removed.");
+      state.modal = { type:"security" }; render();
+    }
     else if(action==="close-modal"){ state.modal=null; render(); }
     else if(action==="close-modal-overlay"){ if(e.target===el){ state.modal=null; render(); } }
     else if(action==="edit-bank"){ state.modal = { type:"account", editId:id }; render(); }
-    else if(action==="delete-bank"){ deleteBank(id); }
+    else if(action==="delete-bank"){ if(!requireAdminPassword("Delete account")) return; deleteBank(id); }
     else if(action==="generate-account-statement"){
       const from = document.getElementById("stmt-from").value || (monthKey(todayStr())+"-01");
       const to = document.getElementById("stmt-to").value || todayStr();
@@ -2171,9 +2238,9 @@ function attachHandlers(){
       if(t) state.modal = { type: t.type==="transfer" ? "transfer" : "transaction", editId:id };
       render();
     }
-    else if(action==="delete-txn"){ deleteTransaction(id); }
+    else if(action==="delete-txn"){ if(!requireAdminPassword("Delete transaction")) return; deleteTransaction(id); }
     else if(action==="edit-budget"){ state.modal = { type:"budget", editId:id }; render(); }
-    else if(action==="delete-budget"){ deleteBudget(id); }
+    else if(action==="delete-budget"){ if(!requireAdminPassword("Delete budget")) return; deleteBudget(id); }
     else if(action==="budget-prev-month"){ state.selectedBudgetMonth = addMonthKey(state.selectedBudgetMonth||monthKey(todayStr()), -1); render(); }
     else if(action==="budget-next-month"){ state.selectedBudgetMonth = addMonthKey(state.selectedBudgetMonth||monthKey(todayStr()), 1); render(); }
     else if(action==="copy-budgets-from-prev"){
@@ -2185,11 +2252,11 @@ function attachHandlers(){
     else if(action==="copy-budget"){ state.modal = { type:"movebudget", budgetId:id, mode:"copy" }; render(); }
     else if(action==="move-budget"){ state.modal = { type:"movebudget", budgetId:id, mode:"move" }; render(); }
     else if(action==="edit-goal"){ state.modal = { type:"goal", editId:id }; render(); }
-    else if(action==="delete-goal"){ deleteGoal(id); }
+    else if(action==="delete-goal"){ if(!requireAdminPassword("Delete goal")) return; deleteGoal(id); }
     else if(action==="edit-recurring"){ state.modal = { type:"recurring", editId:id }; render(); }
-    else if(action==="delete-recurring"){ deleteRecurring(id); }
-    else if(action==="delete-loan"){ deleteLoan(id); }
-    else if(action==="delete-category"){ deleteCategory("expense", el.dataset.name); state.modal={type:"categories"}; render(); }
+    else if(action==="delete-recurring"){ if(!requireAdminPassword("Delete recurring transaction")) return; deleteRecurring(id); }
+    else if(action==="delete-loan"){ if(!requireAdminPassword("Delete loan")) return; deleteLoan(id); }
+    else if(action==="delete-category"){ if(!requireAdminPassword("Delete category")) return; deleteCategory("expense", el.dataset.name); state.modal={type:"categories"}; render(); }
     else if(action==="toggle-recurring"){ toggleRecurring(id); }
     else if(action==="skip-recurring"){ skipRecurring(id); }
     else if(action==="execute-recurring"){ executeRecurring(id); }
@@ -2291,7 +2358,7 @@ function attachHandlers(){
     if(!name) return;
     const editId = state.modal && state.modal.editId;
     const data = { name, balance: isCard ? -bal : bal, isCard, creditLimit: isCard ? (parseFloat(document.getElementById("acc-limit").value)||0) : null };
-    if(editId){ updateBank(editId, data); } else { addBank(data); }
+    if(editId){ if(!requireAdminPassword("Save account changes")) return; updateBank(editId, data); } else { addBank(data); }
     state.modal=null; render();
   });
   bindForm("form-transaction", () => {
@@ -2303,7 +2370,7 @@ function attachHandlers(){
     const date = document.getElementById("txn-date").value || todayStr();
     if(!bankId || !amount || amount<=0 || !category) return;
     const editId = state.modal && state.modal.editId;
-    if(editId){ updateTransaction(editId, {type, bankId, amount, category, note, date}); } else { addTransaction({type, bankId, amount, category, note, date}); }
+    if(editId){ if(!requireAdminPassword("Save transaction changes")) return; updateTransaction(editId, {type, bankId, amount, category, note, date}); } else { addTransaction({type, bankId, amount, category, note, date}); }
     state.modal=null; render();
   });
   bindForm("form-transfer", () => {
@@ -2326,7 +2393,7 @@ function attachHandlers(){
     const editId = state.modal && state.modal.editId;
     const dup = state.budgets.find(b => b.month===month && b.category===category && b.id!==editId);
     if(dup){ alert("A budget for \""+category+"\" already exists in "+monthLabel(month)+"."); return; }
-    if(editId){ updateBudget(editId, {category, limit, month}); } else { addBudget({category, limit, month}); }
+    if(editId){ if(!requireAdminPassword("Save budget changes")) return; updateBudget(editId, {category, limit, month}); } else { addBudget({category, limit, month}); }
     state.selectedBudgetMonth = month;
     state.modal=null; render();
   });
@@ -2336,7 +2403,7 @@ function attachHandlers(){
     if(!toMk) return;
     const b = state.budgets.find(x=>x.id===m.budgetId);
     if(!b){ state.modal=null; render(); return; }
-    const ok = m.mode==="copy" ? copyBudgetToMonth(m.budgetId, toMk) : moveBudgetToMonth(m.budgetId, toMk);
+    const ok = m.mode==="copy" ? copyBudgetToMonth(m.budgetId, toMk) : (requireAdminPassword("Move budget") ? moveBudgetToMonth(m.budgetId, toMk) : false);
     if(!ok){ alert("A budget for \""+b.category+"\" already exists in "+monthLabel(toMk)+"."); return; }
     if(m.mode==="move") state.selectedBudgetMonth = toMk;
     state.modal=null; render();
@@ -2373,6 +2440,7 @@ function attachHandlers(){
     if(!bankId || !amount || amount<=0 || !category) return;
     const editId = state.modal && state.modal.editId;
     if(editId){
+      if(!requireAdminPassword("Save recurring changes")) return;
       updateRecurring(editId, {type, bankId, amount, category, note, dayOfMonth});
     } else {
       const now = new Date();
