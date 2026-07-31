@@ -283,12 +283,28 @@ function simpleHash(text){
 function hasAdminPassword(){ try{ return !!localStorage.getItem(ADMIN_PASS_KEY); }catch(e){ return false; } }
 function verifyAdminPassword(pass){ try{ return localStorage.getItem(ADMIN_PASS_KEY) === simpleHash(pass); }catch(e){ return false; } }
 function requireAdminPassword(reason){
-  if(!hasAdminPassword()) return true;
-  const pass = prompt((reason || "This change") + " requires administrator password.");
-  if(pass===null) return false;
-  if(verifyAdminPassword(pass)) return true;
-  alert("Wrong administrator password.");
-  return false;
+  if(!hasAdminPassword()) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    state.modal = {
+      type: "password-prompt",
+      reason: reason || "This change",
+      onSuccess: () => {
+        state.modal = null;
+        render();
+        resolve(true);
+      },
+      onCancel: () => {
+        state.modal = null;
+        render();
+        resolve(false);
+      }
+    };
+    render();
+    setTimeout(() => {
+      const el = document.getElementById("pass-prompt-input");
+      if(el) el.focus();
+    }, 50);
+  });
 }
 function setAdminPassword(pass){ localStorage.setItem(ADMIN_PASS_KEY, simpleHash(pass)); }
 function clearAdminPassword(){ localStorage.removeItem(ADMIN_PASS_KEY); }
@@ -540,6 +556,8 @@ function cloudStatusDetailHTML(){
   ${cloud.status==="error" && cloud.lastError ? `<div style="font-size:12px;color:var(--red);margin-top:6px;padding-top:6px;border-top:1px solid var(--border);">Error: ${esc(cloud.lastError)}</div>` : ""}`;
 }
 function renderCloudStatus(){
+  const badge = document.getElementById("header-cloud-badge");
+  if(badge) badge.textContent = cloudStatusLabel();
   const btn = document.getElementById("cloud-btn");
   if(btn) btn.textContent = cloudStatusLabel();
   const syncBtn = document.getElementById("sync-now-btn");
@@ -843,10 +861,10 @@ function rangeData(from, to){
     return mk>=monthKey(from) && mk<=monthKey(to);
   }).map(b=>({category:b.category, limit:b.limit, spent: byCat[b.category]||0}));
   // Credit card activity in this period:
-  // - cardPurchases: expenses charged directly to a credit-card account
+  // - cardPurchases: expenses charged to a credit card + transfers originating FROM a credit card (usage/spending)
   // - cardPayments: money transferred FROM a cash/bank account TO a credit-card account (bill payments)
-  const cardPurchases = txns.filter(t=>t.type==="expense" && isCardAccount(t.bankId)).reduce((s,t)=>s+t.amount,0);
-  const cardPayments = txns.filter(t=>t.type==="transfer" && isCardAccount(t.toBankId) && !isCardAccount(t.fromBankId)).reduce((s,t)=>s+t.amount,0);
+  const cardPurchases = txns.filter(t => (t.type==="expense" && isCardAccount(t.bankId)) || (t.type==="transfer" && isCardAccount(t.fromBankId))).reduce((s,t)=>s+t.amount,0);
+  const cardPayments = txns.filter(t => t.type==="transfer" && isCardAccount(t.toBankId) && !isCardAccount(t.fromBankId)).reduce((s,t)=>s+t.amount,0);
   const savingsRate = income>0 ? ((income-expense)/income)*100 : 0;
   return { txns, income, expense, net: income-expense, byCat, incomeByCat, budgetRows, cardPurchases, cardPayments, savingsRate };
 }
@@ -1296,10 +1314,11 @@ function exportData(){
 }
 function importDataFromFile(file){
   const reader = new FileReader();
-  reader.onload = (e) => {
+  reader.onload = async (e) => {
     try{
       const d = JSON.parse(e.target.result);
       if(!confirm("This will replace your current data with the backup file. Continue?")) return;
+      if(!(await requireAdminPassword("Restore backup file"))) return;
       state.banks = d.banks||[]; state.transactions = d.transactions||[]; state.budgets = migrateBudgets(d.budgets||[]);
       state.goals = d.goals||[]; state.recurring = d.recurring||[]; state.loans = d.loans||[];
       state.expenseCats = (d.expenseCats&&d.expenseCats.length)?d.expenseCats:DEFAULT_EXPENSE_CATS;
@@ -1361,7 +1380,7 @@ function parseCSV(text){
 }
 function importTransactionsFromCSV(file){
   const reader = new FileReader();
-  reader.onload = (e) => {
+  reader.onload = async (e) => {
     try{
       const rows = parseCSV(e.target.result);
       if(rows.length < 2){ alert("This file has no data rows."); return; }
@@ -1370,6 +1389,7 @@ function importTransactionsFromCSV(file){
       const iDate=idx("date"), iType=idx("type"), iAccount=idx("account"), iCategory=idx("category"), iAmount=idx("amount"), iNote=idx("note"), iTo=idx("transferto"), iFee=idx("fee");
       if(iDate<0 || iType<0 || iAccount<0 || iAmount<0){ alert("CSV is missing required columns: Date, Type, Account, Amount."); return; }
       if(!confirm("This will add "+(rows.length-1)+" transaction(s) from this file to your current data. Continue?")) return;
+      if(!(await requireAdminPassword("Import CSV transactions"))) return;
 
       let added = 0; const errors = [];
       for(let r=1; r<rows.length; r++){
@@ -1422,13 +1442,11 @@ function render(){
   app.innerHTML = `
     <header class="top">
       <div class="wrap">
-        <div style="float:right;display:flex;gap:8px;margin-top:2px;flex-wrap:wrap;justify-content:flex-end;max-width:260px;">
-          <button class="backup-link" style="float:none;margin:0;" id="cloud-btn" data-action="open-modal" data-modal="cloud">${cloudStatusLabel()}</button>
-          <button class="backup-link" style="float:none;margin:0;opacity:${cloud.db?1:0.7}" id="sync-now-btn" data-action="manual-sync">${syncButtonLabel()}</button>
-          <button class="backup-link" style="float:none;margin:0;" data-action="open-modal" data-modal="report">Report</button>
-          <button class="backup-link" style="float:none;margin:0;" data-action="open-modal" data-modal="theme">🎨 Theme</button>
-          <button class="backup-link" style="float:none;margin:0;" data-action="open-modal" data-modal="security">Security</button>
-          <button class="backup-link" style="float:none;margin:0;" data-action="open-backup">Backup</button>
+        <div style="float:right;display:flex;gap:8px;margin-top:2px;align-items:center;">
+          <button class="backup-link" style="float:none;margin:0;display:inline-flex;align-items:center;gap:6px;" data-action="open-modal" data-modal="settings">
+            <span>⚙️ Options</span>
+            <span id="header-cloud-badge" style="font-size:11px;opacity:0.85;background:rgba(255,255,255,0.15);padding:2px 8px;border-radius:10px;">${cloudStatusLabel()}</span>
+          </button>
         </div>
         <div class="eyebrow">🏛️ My Ledger</div>
         <h1 class="title">Personal Finance Dashboard</h1>
@@ -1928,14 +1946,80 @@ function renderModal(){
   else if(m.type==="cloud") { title="Cloud Sync"; body = cloudForm(); }
   else if(m.type==="theme") { title="Choose a Theme"; body = themeForm(); }
   else if(m.type==="security") { title="Administrator Password"; body = securityForm(); }
+  else if(m.type==="password-prompt") { title="Security Verification"; body = passwordPromptForm(m.reason); }
+  else if(m.type==="settings") { title="⚙️ Options & Settings"; body = settingsForm(); }
 
-  const wide = m.type==="report" ? "max-width:720px;" : (m.type==="textexport" || m.type==="cloud" || m.type==="security") ? "max-width:560px;" : "";
+  const wide = m.type==="report" ? "max-width:720px;" : (m.type==="textexport" || m.type==="cloud" || m.type==="security" || m.type==="password-prompt" || m.type==="settings") ? "max-width:560px;" : "";
   return `<div class="modal-overlay" data-action="close-modal-overlay">
     <div class="modal-box" style="${wide}">
       <div class="modal-head"><h3 class="modal-title" style="word-break:break-all;">${esc(title)}</h3><button class="modal-close" data-action="close-modal">${ICON.x}</button></div>
       ${body}
     </div>
   </div>`;
+}
+function settingsForm(){
+  return `<div style="display:flex;flex-direction:column;gap:12px;">
+    <!-- Cloud Sync -->
+    <div class="card" style="padding:14px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <div style="font-weight:600;font-size:14.5px;">☁️ Cloud Synchronization</div>
+        <button class="btn-outline" style="font-size:12px;padding:4px 10px;opacity:${cloud.db?1:0.7}" id="sync-now-btn" data-action="manual-sync">${syncButtonLabel()}</button>
+      </div>
+      <div id="cloud-status-detail" style="margin-bottom:10px;">${cloudStatusDetailHTML()}</div>
+      <button class="btn-outline" style="width:100%;justify-content:center;font-size:13px;" data-action="open-modal" data-modal="cloud">${cloud.db ? '⚙️ Manage Cloud Settings' : '🔗 Setup Cloud Sync'}</button>
+    </div>
+
+    <!-- Reports -->
+    <div class="card" style="padding:14px;display:flex;justify-content:space-between;align-items:center;">
+      <div>
+        <div style="font-weight:600;font-size:14.5px;">📄 Financial Reports</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px;">Generate P&L, Balance Sheet, & PDF prints</div>
+      </div>
+      <button class="btn-fill" style="font-size:13px;padding:7px 14px;" data-action="open-modal" data-modal="report">Open</button>
+    </div>
+
+    <!-- Theme -->
+    <div class="card" style="padding:14px;display:flex;justify-content:space-between;align-items:center;">
+      <div>
+        <div style="font-weight:600;font-size:14.5px;">🎨 Appearance & Theme</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px;">Switch color scheme or dark mode</div>
+      </div>
+      <button class="btn-outline" style="font-size:13px;padding:7px 14px;" data-action="open-modal" data-modal="theme">Customize</button>
+    </div>
+
+    <!-- Security -->
+    <div class="card" style="padding:14px;display:flex;justify-content:space-between;align-items:center;">
+      <div>
+        <div style="font-weight:600;font-size:14.5px;">🔒 Security Lock</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px;">${hasAdminPassword() ? '🔒 Password protection active' : 'No administrator password set'}</div>
+      </div>
+      <button class="btn-outline" style="font-size:13px;padding:7px 14px;" data-action="open-modal" data-modal="security">Manage</button>
+    </div>
+
+    <!-- Backup & Restore -->
+    <div class="card" style="padding:14px;display:flex;justify-content:space-between;align-items:center;">
+      <div>
+        <div style="font-weight:600;font-size:14.5px;">💾 Backup & Data</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px;">Export/Import JSON backup or CSV files</div>
+      </div>
+      <button class="btn-outline" style="font-size:13px;padding:7px 14px;" data-action="open-backup">Backups</button>
+    </div>
+  </div>`;
+}
+function passwordPromptForm(reason){
+  return `<form class="stack" id="form-password-prompt">
+    <div style="font-size:13.5px;color:var(--muted);margin-bottom:4px;">
+      🔒 <strong>${esc(reason)}</strong> requires administrator password to proceed.
+    </div>
+    <label class="field">Administrator Password
+      <input type="password" id="pass-prompt-input" placeholder="Enter password" required autocomplete="off" />
+    </label>
+    <div id="pass-prompt-error" style="font-size:12.5px;color:var(--red);display:none;">Wrong administrator password.</div>
+    <div style="display:flex;gap:8px;margin-top:4px;">
+      <button type="submit" class="btn-submit" style="flex:1;">Confirm</button>
+      <button type="button" class="btn-outline" style="flex:1;justify-content:center;" data-action="cancel-password-prompt">Cancel</button>
+    </div>
+  </form>`;
 }
 function cloudForm(){
   const cfg = loadCloudConfig();
@@ -2193,7 +2277,7 @@ function backupForm(){
 
 /* ---------------- event handling ---------------- */
 function attachHandlers(){
-  document.body.onclick = (e) => {
+  document.body.onclick = async (e) => {
     const el = e.target.closest("[data-action]");
     if(!el) return;
     const action = el.dataset.action;
@@ -2208,22 +2292,34 @@ function attachHandlers(){
       const p2 = document.getElementById("admin-pass2").value;
       if(!p1){ alert("Please enter a password."); return; }
       if(p1!==p2){ alert("Passwords do not match."); return; }
-      if(hasAdminPassword() && !requireAdminPassword("Change administrator password")) return;
+      if(hasAdminPassword() && !(await requireAdminPassword("Change administrator password"))) return;
       setAdminPassword(p1);
       alert("Administrator password saved.");
       state.modal = { type:"security" }; render();
     }
     else if(action==="clear-admin-password"){
       if(!hasAdminPassword()){ alert("No administrator password is set."); return; }
-      if(!requireAdminPassword("Remove administrator password")) return;
+      if(!(await requireAdminPassword("Remove administrator password"))) return;
       clearAdminPassword();
       alert("Administrator password removed.");
       state.modal = { type:"security" }; render();
     }
-    else if(action==="close-modal"){ state.modal=null; render(); }
-    else if(action==="close-modal-overlay"){ if(e.target===el){ state.modal=null; render(); } }
+    else if(action==="cancel-password-prompt"){
+      if(state.modal && state.modal.onCancel) state.modal.onCancel();
+      else { state.modal=null; render(); }
+    }
+    else if(action==="close-modal"){
+      if(state.modal && state.modal.type==="password-prompt" && state.modal.onCancel) state.modal.onCancel();
+      else { state.modal=null; render(); }
+    }
+    else if(action==="close-modal-overlay"){
+      if(e.target===el){
+        if(state.modal && state.modal.type==="password-prompt" && state.modal.onCancel) state.modal.onCancel();
+        else { state.modal=null; render(); }
+      }
+    }
     else if(action==="edit-bank"){ state.modal = { type:"account", editId:id }; render(); }
-    else if(action==="delete-bank"){ if(!requireAdminPassword("Delete account")) return; deleteBank(id); }
+    else if(action==="delete-bank"){ if(!(await requireAdminPassword("Delete account"))) return; deleteBank(id); }
     else if(action==="generate-account-statement"){
       const from = document.getElementById("stmt-from").value || (monthKey(todayStr())+"-01");
       const to = document.getElementById("stmt-to").value || todayStr();
@@ -2238,9 +2334,9 @@ function attachHandlers(){
       if(t) state.modal = { type: t.type==="transfer" ? "transfer" : "transaction", editId:id };
       render();
     }
-    else if(action==="delete-txn"){ if(!requireAdminPassword("Delete transaction")) return; deleteTransaction(id); }
+    else if(action==="delete-txn"){ if(!(await requireAdminPassword("Delete transaction"))) return; deleteTransaction(id); }
     else if(action==="edit-budget"){ state.modal = { type:"budget", editId:id }; render(); }
-    else if(action==="delete-budget"){ if(!requireAdminPassword("Delete budget")) return; deleteBudget(id); }
+    else if(action==="delete-budget"){ if(!(await requireAdminPassword("Delete budget"))) return; deleteBudget(id); }
     else if(action==="budget-prev-month"){ state.selectedBudgetMonth = addMonthKey(state.selectedBudgetMonth||monthKey(todayStr()), -1); render(); }
     else if(action==="budget-next-month"){ state.selectedBudgetMonth = addMonthKey(state.selectedBudgetMonth||monthKey(todayStr()), 1); render(); }
     else if(action==="copy-budgets-from-prev"){
@@ -2252,15 +2348,15 @@ function attachHandlers(){
     else if(action==="copy-budget"){ state.modal = { type:"movebudget", budgetId:id, mode:"copy" }; render(); }
     else if(action==="move-budget"){ state.modal = { type:"movebudget", budgetId:id, mode:"move" }; render(); }
     else if(action==="edit-goal"){ state.modal = { type:"goal", editId:id }; render(); }
-    else if(action==="delete-goal"){ if(!requireAdminPassword("Delete goal")) return; deleteGoal(id); }
+    else if(action==="delete-goal"){ if(!(await requireAdminPassword("Delete goal"))) return; deleteGoal(id); }
     else if(action==="edit-recurring"){ state.modal = { type:"recurring", editId:id }; render(); }
-    else if(action==="delete-recurring"){ if(!requireAdminPassword("Delete recurring transaction")) return; deleteRecurring(id); }
-    else if(action==="delete-loan"){ if(!requireAdminPassword("Delete loan")) return; deleteLoan(id); }
-    else if(action==="delete-category"){ if(!requireAdminPassword("Delete category")) return; deleteCategory("expense", el.dataset.name); state.modal={type:"categories"}; render(); }
+    else if(action==="delete-recurring"){ if(!(await requireAdminPassword("Delete recurring transaction"))) return; deleteRecurring(id); }
+    else if(action==="delete-loan"){ if(!(await requireAdminPassword("Delete loan"))) return; deleteLoan(id); }
+    else if(action==="delete-category"){ if(!(await requireAdminPassword("Delete category"))) return; deleteCategory("expense", el.dataset.name); state.modal={type:"categories"}; render(); }
     else if(action==="toggle-recurring"){ toggleRecurring(id); }
     else if(action==="skip-recurring"){ skipRecurring(id); }
     else if(action==="execute-recurring"){ executeRecurring(id); }
-    else if(action==="settle-loan"){ settleLoan(id); }
+    else if(action==="settle-loan"){ if(!(await requireAdminPassword("Settle loan"))) return; settleLoan(id); }
     else if(action==="contribute-goal"){
       const input = document.getElementById("goal-add-"+id);
       const amt = parseFloat(input.value);
@@ -2351,17 +2447,29 @@ function attachHandlers(){
   setupAccountDnD();
 
   // forms
-  bindForm("form-account", () => {
+  bindForm("form-password-prompt", () => {
+    const input = document.getElementById("pass-prompt-input");
+    const err = document.getElementById("pass-prompt-error");
+    const val = input ? input.value : "";
+    if(verifyAdminPassword(val)){
+      const cb = state.modal && state.modal.onSuccess;
+      if(cb) cb();
+    } else {
+      if(err) err.style.display = "block";
+      if(input){ input.value = ""; input.focus(); }
+    }
+  });
+  bindForm("form-account", async () => {
     const isCard = document.getElementById("acc-iscard").checked;
     const name = document.getElementById("acc-name").value.trim();
     const bal = parseFloat(document.getElementById("acc-balance").value)||0;
     if(!name) return;
     const editId = state.modal && state.modal.editId;
     const data = { name, balance: isCard ? -bal : bal, isCard, creditLimit: isCard ? (parseFloat(document.getElementById("acc-limit").value)||0) : null };
-    if(editId){ if(!requireAdminPassword("Save account changes")) return; updateBank(editId, data); } else { addBank(data); }
+    if(editId){ if(!(await requireAdminPassword("Save account changes"))) return; updateBank(editId, data); } else { addBank(data); }
     state.modal=null; render();
   });
-  bindForm("form-transaction", () => {
+  bindForm("form-transaction", async () => {
     const type = document.getElementById("txn-type-income").classList.contains("active-income") ? "income" : "expense";
     const bankId = document.getElementById("txn-bank").value;
     const amount = parseFloat(document.getElementById("txn-amount").value);
@@ -2370,10 +2478,10 @@ function attachHandlers(){
     const date = document.getElementById("txn-date").value || todayStr();
     if(!bankId || !amount || amount<=0 || !category) return;
     const editId = state.modal && state.modal.editId;
-    if(editId){ if(!requireAdminPassword("Save transaction changes")) return; updateTransaction(editId, {type, bankId, amount, category, note, date}); } else { addTransaction({type, bankId, amount, category, note, date}); }
+    if(editId){ if(!(await requireAdminPassword("Save transaction changes"))) return; updateTransaction(editId, {type, bankId, amount, category, note, date}); } else { addTransaction({type, bankId, amount, category, note, date}); }
     state.modal=null; render();
   });
-  bindForm("form-transfer", () => {
+  bindForm("form-transfer", async () => {
     const fromBankId = document.getElementById("tr-from").value;
     const toBankId = document.getElementById("tr-to").value;
     const amount = parseFloat(document.getElementById("tr-amount").value);
@@ -2382,10 +2490,10 @@ function attachHandlers(){
     const date = document.getElementById("tr-date").value || todayStr();
     if(!fromBankId || !toBankId || fromBankId===toBankId || !amount || amount<=0) return;
     const editId = state.modal && state.modal.editId;
-    if(editId){ updateTransfer(editId, {fromBankId, toBankId, amount, fee, note, date}); } else { addTransfer({fromBankId, toBankId, amount, fee, note, date}); }
+    if(editId){ if(!(await requireAdminPassword("Save transfer changes"))) return; updateTransfer(editId, {fromBankId, toBankId, amount, fee, note, date}); } else { addTransfer({fromBankId, toBankId, amount, fee, note, date}); }
     state.modal=null; render();
   });
-  bindForm("form-budget", () => {
+  bindForm("form-budget", async () => {
     const category = document.getElementById("bud-category").value;
     const limit = parseFloat(document.getElementById("bud-limit").value);
     const month = document.getElementById("bud-month").value || monthKey(todayStr());
@@ -2393,17 +2501,17 @@ function attachHandlers(){
     const editId = state.modal && state.modal.editId;
     const dup = state.budgets.find(b => b.month===month && b.category===category && b.id!==editId);
     if(dup){ alert("A budget for \""+category+"\" already exists in "+monthLabel(month)+"."); return; }
-    if(editId){ if(!requireAdminPassword("Save budget changes")) return; updateBudget(editId, {category, limit, month}); } else { addBudget({category, limit, month}); }
+    if(editId){ if(!(await requireAdminPassword("Save budget changes"))) return; updateBudget(editId, {category, limit, month}); } else { addBudget({category, limit, month}); }
     state.selectedBudgetMonth = month;
     state.modal=null; render();
   });
-  bindForm("form-move-budget", () => {
+  bindForm("form-move-budget", async () => {
     const m = state.modal; if(!m) return;
     const toMk = document.getElementById("move-budget-month").value;
     if(!toMk) return;
     const b = state.budgets.find(x=>x.id===m.budgetId);
     if(!b){ state.modal=null; render(); return; }
-    const ok = m.mode==="copy" ? copyBudgetToMonth(m.budgetId, toMk) : (requireAdminPassword("Move budget") ? moveBudgetToMonth(m.budgetId, toMk) : false);
+    const ok = m.mode==="copy" ? copyBudgetToMonth(m.budgetId, toMk) : ((await requireAdminPassword("Move budget")) ? moveBudgetToMonth(m.budgetId, toMk) : false);
     if(!ok){ alert("A budget for \""+b.category+"\" already exists in "+monthLabel(toMk)+"."); return; }
     if(m.mode==="move") state.selectedBudgetMonth = toMk;
     state.modal=null; render();
@@ -2414,13 +2522,14 @@ function attachHandlers(){
     input.value="";
     state.modal = {type:"categories"}; render();
   });
-  bindForm("form-goal", () => {
+  bindForm("form-goal", async () => {
     const name = document.getElementById("goal-name").value.trim();
     const target = parseFloat(document.getElementById("goal-target").value);
     const targetDate = document.getElementById("goal-date").value;
     if(!name || !target || target<=0) return;
     const editId = state.modal && state.modal.editId;
     if(editId){
+      if(!(await requireAdminPassword("Save goal changes"))) return;
       const savedInput = document.getElementById("goal-saved");
       const data = { name, target, targetDate };
       if(savedInput) data.saved = parseFloat(savedInput.value)||0;
@@ -2430,7 +2539,7 @@ function attachHandlers(){
     }
     state.modal=null; render();
   });
-  bindForm("form-recurring", () => {
+  bindForm("form-recurring", async () => {
     const type = document.getElementById("rec-type-income").classList.contains("active-income") ? "income" : "expense";
     const bankId = document.getElementById("rec-bank").value;
     const amount = parseFloat(document.getElementById("rec-amount").value);
@@ -2440,7 +2549,7 @@ function attachHandlers(){
     if(!bankId || !amount || amount<=0 || !category) return;
     const editId = state.modal && state.modal.editId;
     if(editId){
-      if(!requireAdminPassword("Save recurring changes")) return;
+      if(!(await requireAdminPassword("Save recurring changes"))) return;
       updateRecurring(editId, {type, bankId, amount, category, note, dayOfMonth});
     } else {
       const now = new Date();
