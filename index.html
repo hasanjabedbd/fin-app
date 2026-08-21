@@ -306,8 +306,14 @@ function requireAdminPassword(reason){
     }, 50);
   });
 }
-function setAdminPassword(pass){ localStorage.setItem(ADMIN_PASS_KEY, simpleHash(pass)); }
-function clearAdminPassword(){ localStorage.removeItem(ADMIN_PASS_KEY); }
+function setAdminPassword(pass){
+  localStorage.setItem(ADMIN_PASS_KEY, simpleHash(pass));
+  if(cloud.db && !cloud.applyingRemote) pushToCloud();
+}
+function clearAdminPassword(){
+  localStorage.removeItem(ADMIN_PASS_KEY);
+  if(cloud.db && !cloud.applyingRemote) pushToCloud();
+}
 
 function uid(){ return (crypto.randomUUID ? crypto.randomUUID() : 'id-'+Date.now()+'-'+Math.random().toString(16).slice(2)); }
 function taka(n){ const sign = n<0?"-":""; const v = Math.abs(n).toLocaleString("en-IN",{maximumFractionDigits:2}); return sign+"৳"+v; }
@@ -366,8 +372,10 @@ function loadState(){
     const raw = localStorage.getItem(STORAGE_KEY);
     if(raw){
       const d = JSON.parse(raw);
+      // Clean up any persistent auto-created budgets from state.budgets
+      const budgets = (d.budgets||[]).filter(b => !b.autoCreated);
       return {
-        banks: d.banks||[], transactions: d.transactions||[], budgets: migrateBudgets(d.budgets||[]),
+        banks: d.banks||[], transactions: d.transactions||[], budgets: migrateBudgets(budgets),
         goals: d.goals||[], recurring: d.recurring||[], loans: d.loans||[],
         expenseCats: (d.expenseCats&&d.expenseCats.length)?d.expenseCats:DEFAULT_EXPENSE_CATS,
         incomeCats: (d.incomeCats&&d.incomeCats.length)?d.incomeCats:DEFAULT_INCOME_CATS,
@@ -462,7 +470,17 @@ function connectCloud(firebaseConfig, syncCode, isManualConnect){
 }
 
 function buildSyncPayload(){
-  return { banks:state.banks, transactions:state.transactions, budgets:state.budgets, goals:state.goals, recurring:state.recurring, loans:state.loans, expenseCats:state.expenseCats, incomeCats:state.incomeCats };
+  return {
+    banks:state.banks,
+    transactions:state.transactions,
+    budgets:state.budgets,
+    goals:state.goals,
+    recurring:state.recurring,
+    loans:state.loans,
+    expenseCats:state.expenseCats,
+    incomeCats:state.incomeCats,
+    adminPassHash: localStorage.getItem(ADMIN_PASS_KEY) || null
+  };
 }
 // Pushes local data to the cloud, but guarantees "last update wins" without relying on any
 // device's clock: it compares the cloud's current version against the version this device last
@@ -512,6 +530,11 @@ function applyRemoteData(remote){
   state.goals = remote.goals||[]; state.recurring = remote.recurring||[]; state.loans = remote.loans||[];
   state.expenseCats = (remote.expenseCats&&remote.expenseCats.length)?remote.expenseCats:DEFAULT_EXPENSE_CATS;
   state.incomeCats = (remote.incomeCats&&remote.incomeCats.length)?remote.incomeCats:DEFAULT_INCOME_CATS;
+  if(remote.adminPassHash){
+    localStorage.setItem(ADMIN_PASS_KEY, remote.adminPassHash);
+  } else {
+    localStorage.removeItem(ADMIN_PASS_KEY);
+  }
   cloud.lastPushedAt = remote.updatedAt||Date.now();
   cloud.lastSyncedVersion = cloud.lastPushedAt;
   cloud.lastSyncedAt = Date.now();
@@ -719,7 +742,16 @@ function updateTransfer(id, data){
   commit();
 }
 function addBudget(data){ state.budgets.push({id:uid(), ...data}); commit(); }
-function updateBudget(id, data){ state.budgets = state.budgets.map(b=>b.id===id?{...b, ...data}:b); commit(); }
+function updateBudget(id, data){
+  state.budgets = state.budgets.map(b=>{
+    if(b.id!==id) return b;
+    const updated = {...b, ...data};
+    // If user sets a real limit (>0), clear the autoCreated flag so it becomes a normal budget
+    if(updated.limit > 0 && b.autoCreated) delete updated.autoCreated;
+    return updated;
+  });
+  commit();
+}
 function deleteBudget(id){ state.budgets = state.budgets.filter(b=>b.id!==id); commit(); }
 // Copy every budget from month `fromMk` into `toMk`, skipping categories that
 // already have a budget in the target month.
@@ -760,7 +792,38 @@ function spendForMonth(mk){
   state.transactions.forEach(t=>{ if(t.type==="expense" && monthKey(t.date)===mk){ map[t.category]=(map[t.category]||0)+t.amount; } });
   return map;
 }
-function budgetsForMonth(mk){ return state.budgets.filter(b=>b.month===mk); }
+function budgetsForMonth(mk){
+  const real = state.budgets.filter(b=>b.month===mk);
+  const ms = spendForMonth(mk);
+  const synthesized = [];
+  Object.keys(ms).forEach(category => {
+    if(!real.some(b => b.category === category)){
+      synthesized.push({
+        id: `auto-${category}-${mk}`,
+        category,
+        limit: 0,
+        month: mk,
+        autoCreated: true
+      });
+    }
+  });
+  return [...real, ...synthesized];
+}
+function findBudgetById(id){
+  const real = state.budgets.find(b=>b.id===id);
+  if(real) return real;
+  if(id && id.startsWith('auto-')){
+    const parts = id.split('-');
+    const mk = parts[parts.length-2] + '-' + parts[parts.length-1];
+    const category = parts.slice(1, parts.length-2).join('-');
+    return { id, category, limit: 0, month: mk, autoCreated: true };
+  }
+  return null;
+}
+function unbudgetedSpending(){
+  const cm = monthKey(todayStr());
+  return budgetsForMonth(cm).filter(b => b.autoCreated);
+}
 function addGoal(data){ state.goals.push({id:uid(), saved:0, ...data}); commit(); }
 function updateGoal(id, data){ state.goals = state.goals.map(g=>g.id===id?{...g, ...data}:g); commit(); }
 function contributeGoal(id, amt){ state.goals = state.goals.map(g=>g.id===id?{...g, saved:g.saved+amt}:g); commit(); }
@@ -821,7 +884,7 @@ function availableLiquidity(){ return state.banks.filter(b=>!b.isCard).reduce((s
 function isCardAccount(id){ const b=bankById(id); return !!(b&&b.isCard); }
 function outstandingLent(){ return state.loans.filter(l=>l.type==="lent"&&!l.settled).reduce((s,l)=>s+l.amount,0); }
 function outstandingBorrowed(){ return state.loans.filter(l=>l.type==="borrowed"&&!l.settled).reduce((s,l)=>s+l.amount,0); }
-function overBudget(){ const ms=monthlySpend(); return budgetsForMonth(monthKey(todayStr())).filter(b=>(ms[b.category]||0) > b.limit); }
+function overBudget(){ const ms=monthlySpend(); return budgetsForMonth(monthKey(todayStr())).filter(b=>!b.autoCreated && (ms[b.category]||0) > b.limit); }
 function budgetSummary(){
   const ms = monthlySpend();
   const budgets = budgetsForMonth(monthKey(todayStr()));
@@ -1520,6 +1583,23 @@ function renderDashboard(){
     </div>`;
   }
 
+  const ub = unbudgetedSpending();
+  if(ub.length){
+    html += `<div class="alert-card" style="border-color:rgba(201,162,39,0.35);border-left:4px solid var(--gold);margin-bottom:22px;">
+      <div class="alert-title" style="color:var(--gold)">⚠️ Unbudgeted Spending</div>
+      <div style="font-size:12.5px;color:var(--muted);margin:4px 0 8px;">You spent in these categories this month but have no budget set. Consider creating a budget to track them.</div>
+      <div class="alert-body">${ub.map(b=>`
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;font-size:13.5px;border-bottom:1px solid var(--border);">
+          <div>
+            <span style="font-weight:600;">${esc(b.category)}</span>
+            <span style="color:var(--red);margin-left:8px;font-family:var(--mono);">${taka(ms[b.category]||0)} spent</span>
+            <span style="font-size:11px;color:var(--gold);background:rgba(201,162,39,0.12);border:1px solid rgba(201,162,39,0.25);border-radius:20px;padding:1px 8px;margin-left:6px;">no budget</span>
+          </div>
+          <button class="btn-outline" style="font-size:12px;padding:4px 10px;border-color:var(--gold);color:var(--gold);" data-action="edit-budget" data-id="${b.id}">Set Budget</button>
+        </div>`).join("")}</div>
+    </div>`;
+  }
+
   html += `<div class="grid stat" style="margin-bottom:22px;">
     <button class="stat-card" data-action="set-tab" data-tab="accounts">🏦<div class="amt stat-value">${state.banks.filter(b=>!b.isCard).length}</div><div class="stat-label">Bank Accounts</div></button>
     <button class="stat-card" data-action="set-tab" data-tab="goals">🎯<div class="amt stat-value">${state.goals.length}</div><div class="stat-label">Active Goals</div></button>
@@ -1811,6 +1891,7 @@ function renderBudgets(){
           <span style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
             <span style="font-weight:600;font-size:14.5px;">${esc(b.category)}</span>
             <span style="font-size:11px;font-weight:600;color:var(--muted);background:rgba(27,67,50,0.07);border:1px solid var(--border);border-radius:20px;padding:2px 9px;letter-spacing:.2px;">${esc(monthLabel(b.month))}</span>
+            ${b.autoCreated ? `<span style="font-size:10.5px;font-weight:700;color:var(--gold);background:rgba(201,162,39,0.12);border:1px solid rgba(201,162,39,0.25);border-radius:20px;padding:2px 9px;letter-spacing:.2px;">Auto Created Budget</span>` : ""}
           </span>
           <div style="display:flex;gap:4px;">
             <button class="icon-btn" data-action="edit-budget" data-id="${b.id}">${ICON.edit}</button>
@@ -1945,7 +2026,7 @@ function renderModal(){
   else if(m.type==="report") { title="Report"; body = reportForm(m.from || (monthKey(todayStr())+"-01"), m.to || todayStr()); }
   else if(m.type==="cloud") { title="Cloud Sync"; body = cloudForm(); }
   else if(m.type==="theme") { title="Choose a Theme"; body = themeForm(); }
-  else if(m.type==="security") { title="Administrator Password"; body = securityForm(); }
+  else if(m.type==="security") { title="Local Password Lock"; body = securityForm(); }
   else if(m.type==="password-prompt") { title="Security Verification"; body = passwordPromptForm(m.reason); }
   else if(m.type==="settings") { title="⚙️ Options & Settings"; body = settingsForm(); }
 
@@ -1990,8 +2071,8 @@ function settingsForm(){
     <!-- Security -->
     <div class="card" style="padding:14px;display:flex;justify-content:space-between;align-items:center;">
       <div>
-        <div style="font-weight:600;font-size:14.5px;">🔒 Security Lock</div>
-        <div style="font-size:12px;color:var(--muted);margin-top:2px;">${hasAdminPassword() ? '🔒 Password protection active' : 'No administrator password set'}</div>
+        <div style="font-weight:600;font-size:14.5px;">🔒 Local Password Lock</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px;">${hasAdminPassword() ? '🔒 Local lock active' : 'No local password set'}</div>
       </div>
       <button class="btn-outline" style="font-size:13px;padding:7px 14px;" data-action="open-modal" data-modal="security">Manage</button>
     </div>
@@ -2009,15 +2090,18 @@ function settingsForm(){
 function passwordPromptForm(reason){
   return `<form class="stack" id="form-password-prompt">
     <div style="font-size:13.5px;color:var(--muted);margin-bottom:4px;">
-      🔒 <strong>${esc(reason)}</strong> requires administrator password to proceed.
+      🔒 <strong>${esc(reason)}</strong> requires your local password lock to proceed.
     </div>
-    <label class="field">Administrator Password
+    <label class="field">Local Password
       <input type="password" id="pass-prompt-input" placeholder="Enter password" required autocomplete="off" />
     </label>
-    <div id="pass-prompt-error" style="font-size:12.5px;color:var(--red);display:none;">Wrong administrator password.</div>
+    <div id="pass-prompt-error" style="font-size:12.5px;color:var(--red);display:none;">Wrong password.</div>
     <div style="display:flex;gap:8px;margin-top:4px;">
       <button type="submit" class="btn-submit" style="flex:1;">Confirm</button>
       <button type="button" class="btn-outline" style="flex:1;justify-content:center;" data-action="cancel-password-prompt">Cancel</button>
+    </div>
+    <div style="text-align:center;margin-top:8px;border-top:1px dashed var(--border);padding-top:12px;">
+      <button type="button" class="btn-outline" style="border-color:var(--red);color:var(--red);font-size:12px;padding:6px 12px;width:100%;justify-content:center;" data-action="master-clear-password">Forgot password? Clear the lock</button>
     </div>
   </form>`;
 }
@@ -2052,10 +2136,10 @@ function cloudForm(){
 function securityForm(){
   const enabled = hasAdminPassword();
   return `<div style="display:flex;flex-direction:column;gap:12px;">
-    <p style="font-size:13px;color:var(--muted);margin:0;">Protect edit and delete actions with a local administrator password.</p>
+    <p style="font-size:13px;color:var(--muted);margin:0;">Require a local password before opening edit screens and before delete, import, or restore actions.</p>
     <div class="card" style="padding:12px;">
       <div style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;font-weight:700;">Status</div>
-      <div style="font-size:14.5px;font-weight:600;margin-top:4px;color:${enabled?'var(--green)':'var(--red)'};">${enabled?'Password enabled':'No password set'}</div>
+      <div style="font-size:14.5px;font-weight:600;margin-top:4px;color:${enabled?'var(--green)':'var(--red)'};">${enabled?'Local lock enabled':'No password set'}</div>
     </div>
     <label class="field">New Password
       <input id="admin-pass1" type="password" placeholder="Enter new password" />
@@ -2067,7 +2151,11 @@ function securityForm(){
       <button class="btn-submit" style="flex:1;min-width:160px;" data-action="save-admin-password">Save Password</button>
       <button class="btn-outline" style="flex:1;min-width:160px;justify-content:center;" data-action="clear-admin-password">Remove Password</button>
     </div>
-    <p style="font-size:12px;color:var(--muted);margin:0;">If no password is set, edit/delete actions work normally. This is stored only on this device.</p>
+    ${enabled ? `
+    <div style="text-align:center;margin-top:8px;border-top:1px dashed var(--border);padding-top:12px;">
+      <button type="button" class="btn-outline" style="border-color:var(--red);color:var(--red);font-size:12px;padding:6px 12px;width:100%;justify-content:center;" data-action="master-clear-password">Master Key: Clear Password (no current password needed)</button>
+    </div>` : ''}
+    <p style="font-size:12px;color:var(--muted);margin:0;">This is a convenience lock for shared devices, not account-based security. If no password is set, protected actions work normally. The lock hash syncs to connected devices.</p>
   </div>`;
 }
 function themeForm(){
@@ -2179,17 +2267,17 @@ function transferForm(editId){
   </form>`;
 }
 function budgetForm(editId){
-  const editing = editId ? state.budgets.find(b=>b.id===editId) : null;
+  const editing = editId ? findBudgetById(editId) : null;
   const month = editing ? editing.month : (state.selectedBudgetMonth || monthKey(todayStr()));
   return `<form class="stack" id="form-budget">
     <label class="field">Month<input type="month" id="bud-month" value="${month}" required /></label>
     <label class="field">Category<select id="bud-category">${state.expenseCats.map(c=>`<option value="${esc(c)}" ${editing&&editing.category===c?'selected':''}>${esc(c)}</option>`).join("")}</select></label>
-    <label class="field">Monthly Limit (৳)<input type="number" id="bud-limit" placeholder="0" value="${editing?editing.limit:''}" required /></label>
+    <label class="field">Monthly Limit (৳)<input type="number" id="bud-limit" placeholder="0" value="${editing&&editing.limit>0?editing.limit:''}" required /></label>
     <button type="submit" class="btn-submit">${editing?'Save Changes':'Add'}</button>
   </form>`;
 }
 function moveBudgetForm(budgetId, mode){
-  const b = state.budgets.find(x=>x.id===budgetId);
+  const b = findBudgetById(budgetId);
   if(!b) return `<div class="empty">Budget not found.</div>`;
   const target = addMonthKey(b.month, 1); // default suggestion: next month
   const verb = mode==="copy" ? "Copy" : "Move";
@@ -2292,21 +2380,29 @@ function attachHandlers(){
       const p2 = document.getElementById("admin-pass2").value;
       if(!p1){ alert("Please enter a password."); return; }
       if(p1!==p2){ alert("Passwords do not match."); return; }
-      if(hasAdminPassword() && !(await requireAdminPassword("Change administrator password"))) return;
+      if(hasAdminPassword() && !(await requireAdminPassword("Change local password"))) return;
       setAdminPassword(p1);
-      alert("Administrator password saved.");
+      alert("Local password saved.");
       state.modal = { type:"security" }; render();
     }
     else if(action==="clear-admin-password"){
-      if(!hasAdminPassword()){ alert("No administrator password is set."); return; }
-      if(!(await requireAdminPassword("Remove administrator password"))) return;
+      if(!hasAdminPassword()){ alert("No local password is set."); return; }
+      if(!(await requireAdminPassword("Remove local password"))) return;
       clearAdminPassword();
-      alert("Administrator password removed.");
+      alert("Local password removed.");
       state.modal = { type:"security" }; render();
     }
     else if(action==="cancel-password-prompt"){
       if(state.modal && state.modal.onCancel) state.modal.onCancel();
       else { state.modal=null; render(); }
+    }
+    else if(action==="master-clear-password"){
+      if(!confirm("Clear the password lock without entering the current password?\n\nThis is meant for when you've forgotten it. All protected actions will work normally afterward, and the change syncs to your connected devices.")) return;
+      const pending = state.modal && state.modal.type==="password-prompt" ? state.modal.onCancel : null;
+      clearAdminPassword();
+      state.modal = null;
+      if(pending) pending(); else render();
+      alert("Password lock cleared.");
     }
     else if(action==="close-modal"){
       if(state.modal && state.modal.type==="password-prompt" && state.modal.onCancel) state.modal.onCancel();
@@ -2318,7 +2414,10 @@ function attachHandlers(){
         else { state.modal=null; render(); }
       }
     }
-    else if(action==="edit-bank"){ state.modal = { type:"account", editId:id }; render(); }
+    else if(action==="edit-bank"){
+      if(!(await requireAdminPassword("Edit account"))) return;
+      state.modal = { type:"account", editId:id }; render();
+    }
     else if(action==="delete-bank"){ if(!(await requireAdminPassword("Delete account"))) return; deleteBank(id); }
     else if(action==="generate-account-statement"){
       const from = document.getElementById("stmt-from").value || (monthKey(todayStr())+"-01");
@@ -2331,11 +2430,16 @@ function attachHandlers(){
     }
     else if(action==="edit-txn"){ 
       const t = state.transactions.find(x=>x.id===id);
-      if(t) state.modal = { type: t.type==="transfer" ? "transfer" : "transaction", editId:id };
+      if(!t) return;
+      if(!(await requireAdminPassword(t.type==="transfer" ? "Edit transfer" : "Edit transaction"))) return;
+      state.modal = { type: t.type==="transfer" ? "transfer" : "transaction", editId:id };
       render();
     }
     else if(action==="delete-txn"){ if(!(await requireAdminPassword("Delete transaction"))) return; deleteTransaction(id); }
-    else if(action==="edit-budget"){ state.modal = { type:"budget", editId:id }; render(); }
+    else if(action==="edit-budget"){
+      if(!(await requireAdminPassword("Edit budget"))) return;
+      state.modal = { type:"budget", editId:id }; render();
+    }
     else if(action==="delete-budget"){ if(!(await requireAdminPassword("Delete budget"))) return; deleteBudget(id); }
     else if(action==="budget-prev-month"){ state.selectedBudgetMonth = addMonthKey(state.selectedBudgetMonth||monthKey(todayStr()), -1); render(); }
     else if(action==="budget-next-month"){ state.selectedBudgetMonth = addMonthKey(state.selectedBudgetMonth||monthKey(todayStr()), 1); render(); }
@@ -2347,9 +2451,15 @@ function attachHandlers(){
     }
     else if(action==="copy-budget"){ state.modal = { type:"movebudget", budgetId:id, mode:"copy" }; render(); }
     else if(action==="move-budget"){ state.modal = { type:"movebudget", budgetId:id, mode:"move" }; render(); }
-    else if(action==="edit-goal"){ state.modal = { type:"goal", editId:id }; render(); }
+    else if(action==="edit-goal"){
+      if(!(await requireAdminPassword("Edit goal"))) return;
+      state.modal = { type:"goal", editId:id }; render();
+    }
     else if(action==="delete-goal"){ if(!(await requireAdminPassword("Delete goal"))) return; deleteGoal(id); }
-    else if(action==="edit-recurring"){ state.modal = { type:"recurring", editId:id }; render(); }
+    else if(action==="edit-recurring"){
+      if(!(await requireAdminPassword("Edit recurring transaction"))) return;
+      state.modal = { type:"recurring", editId:id }; render();
+    }
     else if(action==="delete-recurring"){ if(!(await requireAdminPassword("Delete recurring transaction"))) return; deleteRecurring(id); }
     else if(action==="delete-loan"){ if(!(await requireAdminPassword("Delete loan"))) return; deleteLoan(id); }
     else if(action==="delete-category"){ if(!(await requireAdminPassword("Delete category"))) return; deleteCategory("expense", el.dataset.name); state.modal={type:"categories"}; render(); }
@@ -2501,7 +2611,12 @@ function attachHandlers(){
     const editId = state.modal && state.modal.editId;
     const dup = state.budgets.find(b => b.month===month && b.category===category && b.id!==editId);
     if(dup){ alert("A budget for \""+category+"\" already exists in "+monthLabel(month)+"."); return; }
-    if(editId){ if(!(await requireAdminPassword("Save budget changes"))) return; updateBudget(editId, {category, limit, month}); } else { addBudget({category, limit, month}); }
+    if(editId && !editId.startsWith('auto-')){
+      if(!(await requireAdminPassword("Save budget changes"))) return;
+      updateBudget(editId, {category, limit, month});
+    } else {
+      addBudget({category, limit, month});
+    }
     state.selectedBudgetMonth = month;
     state.modal=null; render();
   });
