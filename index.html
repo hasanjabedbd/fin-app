@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
 <title>My Ledger — Personal Finance</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
   :root{
     --bg:#F7F2E6; --card:#FFFDF8; --border:#E7DFCB; --border2:#D8CFB6;
@@ -184,6 +185,64 @@
 
   .cat-list{display:flex;flex-direction:column;gap:6px;max-height:260px;overflow-y:auto;}
   .cat-row{display:flex;justify-content:space-between;align-items:center;padding:9px 12px;background:var(--card);border:1px solid var(--border);border-radius:9px;font-size:14px;box-shadow:var(--shadow-sm);}
+  .ai-preview{border:1px solid var(--border);border-radius:12px;padding:14px;background:var(--card);box-shadow:var(--shadow-sm);}
+  .ai-preview-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-top:10px;}
+  .ai-chip-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;}
+  .ai-chip{display:inline-flex;align-items:center;padding:6px 10px;border-radius:999px;background:var(--hover);border:1px solid var(--border);font-size:12px;color:var(--muted);}
+
+  /* Chat Assistant UI */
+  .chat-view{max-width:840px;margin:0 auto;display:flex;flex-direction:column;height:calc(100vh - 215px);min-height:520px;max-height:800px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-md);overflow:hidden;}
+  .chat-view.in-modal{height:72vh;min-height:480px;max-height:640px;border:none;box-shadow:none;}
+  .chat-topbar{padding:12px 18px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);background:var(--hover);}
+  .chat-bot-meta{display:flex;align-items:center;gap:10px;}
+  .chat-bot-title{font-family:var(--serif);font-weight:600;font-size:16px;color:var(--green);line-height:1.2;}
+  .chat-bot-sub{font-size:11.5px;color:var(--muted);margin-top:2px;}
+  .chat-msgs{flex:1;overflow-y:auto;padding:18px 16px;display:flex;flex-direction:column;gap:14px;background:var(--bg);}
+  .chat-row{display:flex;gap:10px;max-width:88%;animation:modalIn .2s ease;}
+  .chat-row.user{align-self:flex-end;flex-direction:row-reverse;}
+  .chat-row.ai{align-self:flex-start;}
+  .chat-bubble{padding:10px 14px;border-radius:14px;font-size:14px;line-height:1.5;word-break:break-word;}
+  .chat-row.user .chat-bubble{background:var(--green);color:var(--on-primary);border-bottom-right-radius:3px;box-shadow:var(--shadow-sm);}
+  .chat-row.ai .chat-bubble{background:var(--card);color:var(--ink);border:1px solid var(--border);border-bottom-left-radius:3px;box-shadow:var(--shadow-sm);}
+  .chat-time{font-size:10.5px;color:var(--muted);margin-top:4px;text-align:right;}
+  .chat-row.ai .chat-time{text-align:left;}
+  .chat-tx-box{margin-top:10px;padding:12px;background:var(--hover);border:1px solid var(--border2);border-radius:10px;display:flex;flex-direction:column;gap:8px;}
+  .chat-tx-head{display:flex;justify-content:space-between;align-items:center;border-bottom:1px dashed var(--border2);padding-bottom:6px;}
+  .chat-tx-badge{display:inline-flex;align-items:center;gap:4px;font-size:12px;font-weight:700;color:var(--green-light);}
+  .chat-tx-amt{font-size:16px;font-weight:700;}
+  .chat-tx-grid{display:grid;grid-template-columns:repeat(2, 1fr);gap:6px;font-size:12px;color:var(--muted);}
+  .chat-tx-grid strong{color:var(--ink);font-weight:600;}
+  .chat-tx-btn-row{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;}
+  .chat-mini-btn{font-size:11.5px;padding:4px 10px;border-radius:6px;border:1px solid var(--border2);background:var(--card);color:var(--ink);cursor:pointer;display:inline-flex;align-items:center;gap:4px;}
+  .chat-mini-btn:hover{background:var(--hover);border-color:var(--green);}
+  .chat-mini-btn.danger:hover{border-color:var(--red);color:var(--red);}
+  .chat-chips{display:flex;gap:7px;overflow-x:auto;padding:8px 14px;background:var(--card);border-top:1px solid var(--border);scrollbar-width:none;}
+  .chat-chips::-webkit-scrollbar{display:none;}
+  .chat-chip-btn{font-size:12px;padding:5px 11px;border-radius:15px;background:var(--hover);border:1px solid var(--border);color:var(--muted);white-space:nowrap;cursor:pointer;transition:all .15s ease;}
+  .chat-chip-btn:hover{border-color:var(--green);color:var(--green);background:var(--card);}
+  .chat-input-bar{display:flex;gap:8px;padding:12px 14px;background:var(--card);border-top:1px solid var(--border);align-items:center;}
+  .chat-input-field{flex:1;padding:10px 14px;border-radius:24px;border:1px solid var(--border2);background:var(--bg);font-size:14px;color:var(--ink);outline:none;transition:border-color .15s ease;}
+  .chat-input-field:focus{border-color:var(--green);background:var(--card);box-shadow:0 0 0 3px rgba(27,67,50,0.1);}
+  .chat-send-btn{width:40px;height:40px;border-radius:50%;background:var(--green);color:var(--on-primary);border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;box-shadow:0 2px 8px rgba(27,67,50,0.25);transition:transform .15s ease, background .15s ease;}
+  .chat-send-btn:hover{background:var(--green-deep);transform:scale(1.05);}
+  .chat-send-btn:active{transform:scale(0.95);}
+  .chat-fab{position:fixed;bottom:24px;right:24px;z-index:40;display:inline-flex;align-items:center;gap:8px;background:var(--green);color:var(--on-primary);padding:11px 18px;border-radius:30px;border:none;font-size:13.5px;font-weight:600;box-shadow:0 4px 18px rgba(27,67,50,0.35);cursor:pointer;transition:all .2s var(--ease);}
+  .chat-fab:hover{transform:translateY(-2px);background:var(--green-deep);box-shadow:0 6px 24px rgba(27,67,50,0.45);}
+  @keyframes typingDot{0%,60%,100%{transform:translateY(0);opacity:.4;}30%{transform:translateY(-5px);opacity:1;}}
+  .chat-review{margin-top:10px;padding:12px;background:var(--hover);border:1px solid var(--gold);border-radius:10px;display:flex;flex-direction:column;gap:9px;}
+  .chat-review-head{display:flex;justify-content:space-between;align-items:center;border-bottom:1px dashed var(--border2);padding-bottom:6px;}
+  .chat-review-badge{display:inline-flex;align-items:center;gap:4px;font-size:12px;font-weight:700;color:var(--gold);}
+  .chat-review-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}
+  .chat-review-grid label{display:flex;flex-direction:column;gap:3px;font-size:10.5px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.4px;}
+  .chat-review-grid input,.chat-review-grid select{width:100%;padding:7px 9px;border:1px solid var(--border2);border-radius:8px;background:var(--card);color:var(--ink);font-size:13px;font-family:var(--sans);text-transform:none;letter-spacing:0;}
+  .chat-review-grid input:focus,.chat-review-grid select:focus{border-color:var(--green);outline:none;box-shadow:0 0 0 3px color-mix(in srgb,var(--green) 12%,transparent);}
+  .chat-review-wide{grid-column:1 / -1;}
+  .chat-review-err{font-size:12px;color:var(--red);background:color-mix(in srgb,var(--red) 9%,transparent);border:1px solid color-mix(in srgb,var(--red) 30%,transparent);border-radius:8px;padding:7px 10px;}
+  .gemini-setup-box{background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:18px;display:flex;flex-direction:column;gap:12px;}
+  .gemini-key-steps{display:flex;flex-direction:column;gap:8px;padding:12px;background:var(--hover);border-radius:9px;font-size:13px;color:var(--ink);}
+  .gemini-key-steps ol{margin:0;padding-left:18px;line-height:1.8;}
+  .gemini-key-steps a{color:var(--green);font-weight:600;text-decoration:none;}
+  .gemini-key-steps a:hover{text-decoration:underline;}
 
   .svg-icon{width:14px;height:14px;display:inline-block;vertical-align:-2px;}
   .offline-badge{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);background:var(--green);color:var(--on-primary);font-size:11.5px;padding:6px 14px;border-radius:20px;opacity:.9;z-index:5;box-shadow:0 4px 14px rgba(27,67,50,0.28);letter-spacing:.3px;}
@@ -338,6 +397,1196 @@ function addMonthKeepDay(dateStr){
 function daysUntil(dateStr){ return Math.ceil((new Date(dateStr) - new Date(todayStr())) / 86400000); }
 function esc(s){ return (s==null?"":String(s)).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
+/* ---------------- local AI assistant & chat ---------------- */
+const CHAT_STORAGE_KEY = "ledger-ai-chat-messages";
+const GEMINI_API_KEY_STORAGE = "ledger-gemini-api-key";
+const GEMINI_MODEL_STORAGE = "ledger-gemini-model";
+const GEMINI_MODELS = ["gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro"];
+let aiChatBusy = false;
+
+function bnToEnDigits(str){
+  const bnDigits = ['০','১','২','৩','৪','৫','৬','৭','৮','৯'];
+  return String(str||"").replace(/[০-৯]/g, d => bnDigits.indexOf(d));
+}
+
+function defaultAIAssistantState(){
+  return { text:"", parsed:null, errors:[], hints:[], lastSaved:null };
+}
+function defaultAIDraft(kind){
+  return {
+    kind: kind || "expense",
+    amount: "",
+    date: todayStr(),
+    bankId: "",
+    fromBankId: "",
+    toBankId: "",
+    category: "",
+    note: "",
+    fee: ""
+  };
+}
+function aiNormalizedText(text){
+  const en = bnToEnDigits(String(text||"").toLowerCase());
+  return en.replace(/[.,/#!$%^&*;:{}=\-_`~()?]/g, " ").replace(/\s+/g, " ").trim();
+}
+function aiEscapeRegex(text){
+  return String(text||"").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function aiTextHas(text, words){
+  return words.some(w => {
+    if(!w) return false;
+    if(w.includes(" ")) return text.includes(w);
+    return new RegExp("(^|\\s)"+aiEscapeRegex(w)+"(?=\\s|$)").test(text);
+  });
+}
+function aiShiftDate(days){
+  const d = new Date(todayStr());
+  d.setDate(d.getDate() + days);
+  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+}
+function aiExtractAmount(text){
+  const normalized = bnToEnDigits(String(text||"").toLowerCase());
+  // k notation: e.g. 5k, 2.5k, 25k, 100k
+  const kMatch = normalized.match(/\b(\d+(?:\.\d+)?)\s*k\b/);
+  if(kMatch){
+    const v = parseFloat(kMatch[1]);
+    if(!isNaN(v)) return v * 1000;
+  }
+  const matches = normalized.match(/\b\d[\d,]*(?:\.\d+)?\b/g);
+  if(!matches || !matches.length) return null;
+  // If multiple numbers, look for one directly adjacent to taka/tk/৳/টাকা
+  for(const m of matches){
+    const num = parseFloat(m.replace(/,/g,""));
+    if(!isNaN(num) && num > 0){
+      const nearRegex = new RegExp("(?:taka|tk|টাকা|৳|\\/\\-)\\s*"+aiEscapeRegex(m)+"|"+aiEscapeRegex(m)+"\\s*(?:taka|tk|টাকা|৳|\\/\\-)");
+      if(nearRegex.test(normalized)) return num;
+    }
+  }
+  const first = parseFloat(matches[0].replace(/,/g,""));
+  return isNaN(first) ? null : first;
+}
+// Optional bank/transfer fee, e.g. "transfer 1000, fee 15" or "15 taka charge".
+// Word boundaries keep "mobile recharge 500" from being read as a 500 fee.
+function aiExtractFee(text){
+  const normalized = bnToEnDigits(String(text||"").toLowerCase());
+  const words = "(?:fee|fees|charge|charges|commission|bank fee|service charge|ফি|চার্জ|কমিশন)";
+  const patterns = [
+    new RegExp("(?:^|\\s)"+words+"(?=\\s|\\d|:|-)[^\\d]{0,8}(\\d+(?:\\.\\d+)?)"),
+    new RegExp("(\\d+(?:\\.\\d+)?)\\s*(?:taka|tk|৳|টাকা)?\\s+(?:^|\\s)"+words+"(?=\\s|$)")
+  ];
+  for(const re of patterns){
+    const m = normalized.match(re);
+    if(m){
+      const v = parseFloat(m[1]);
+      if(!isNaN(v) && v > 0) return v;
+    }
+  }
+  return null;
+}
+
+// Boundary-aware position of an alias, so "cash" never matches inside "cashback"
+// and "city" never matches inside "electricity".
+function aiAliasIndex(normalized, raw, alias){
+  const a = String(alias||"").toLowerCase().trim();
+  if(!a) return -1;
+  const safe = aiEscapeRegex(a);
+  const pattern = a.includes(" ") ? safe : "(^|\\s)"+safe+"(?=\\s|$)";
+  const re = new RegExp(pattern);
+  for(const text of [normalized, raw]){
+    const m = re.exec(text);
+    if(m) return m.index + (m[1] ? m[1].length : 0);
+  }
+  return -1;
+}
+function aiFindBankMatches(text){
+  const raw = String(text||"").toLowerCase();
+  const normalized = aiNormalizedText(text);
+  const matches = [];
+  state.banks.forEach(bank => {
+    const name = bank.name.toLowerCase();
+    const compact = name.replace(/\s+/g, "");
+    const aliases = [name, compact];
+    if(name.includes("cash") || name.includes("wallet") || name.includes("hand")){
+      aliases.push("cash", "cashe", "cash-e", "wallet", "হাতে", "ক্যাশ", "ক্যাশে", "পকেট", "pocket");
+    }
+    if(name.includes("bkash")){
+      aliases.push("bkash", "bkashe", "bkash-e", "b kash", "bksh", "বিকাশ", "বিকাশে");
+    }
+    if(name.includes("nagad")){
+      aliases.push("nagad", "nagade", "nagad-e", "নগদ", "নগদে");
+    }
+    if(name.includes("rocket")){
+      aliases.push("rocket", "rockete", "রকেট", "রকেটে");
+    }
+    if(name.includes("bank") || name.includes("islami") || name.includes("city") || name.includes("brac") || name.includes("dbbl") || name.includes("sonali")){
+      aliases.push("bank", "banke", "ব্যাংক", "ব্যাংকে", name.replace(/\bbank\b/g,"").trim());
+    }
+    let found = null, foundIdx = 9999;
+    aliases.filter(Boolean).forEach(alias => {
+      const idx = aiAliasIndex(normalized, raw, alias);
+      if(idx >= 0 && foundIdx === 9999){
+        found = alias;
+        foundIdx = idx;
+      }
+    });
+    if(found && !matches.some(m => m.id===bank.id)){
+      matches.push({ id:bank.id, name:bank.name, alias:found, index:foundIdx });
+    }
+  });
+  matches.sort((a,b)=>a.index-b.index);
+  return matches;
+}
+
+function aiFindCategory(text, kind){
+  const normalized = aiNormalizedText(text);
+  const raw = String(text||"").toLowerCase();
+  const categories = kind==="income" ? state.incomeCats : state.expenseCats;
+  const builtIn = kind==="income" ? {
+    Salary:["salary","beton","betan","payroll","wage","bonus","stipend","বেতন","বোনাস","সম্মানী"],
+    Business:["business","sale","sell","client","customer","freelance","project","revenue","profit","bebsha","ব্যবসা","মুনাফা","লাভ","ক্লায়েন্ট"],
+    Gift:["gift","present","hadia","donation","salami","upohar","দান","হাদিয়া","উপহার","সালামি"],
+    Investment:["investment","interest","dividend","return","munafo","stock","share","বিনিয়োগ","মুনাফা","শেয়ার"]
+  } : {
+    Food:[
+      "grocery","groceries","food","meal","restaurant","lunch","dinner","breakfast","snack","snacks",
+      "bazaar","bazar","market","khabar","cha","tea","coffee","dim","mach","maach","goru","mangsho",
+      "chicken","chal","chaal","dal","daal","tel","oil","shobji","vegetable","sweets","misti","mishti",
+      "biryani","burger","pizza","nasta","nashta","ranna","bakery","fruit","fal","dudh","milk","fish","meat","bread","ruti","egg","eggs",
+      "গ্রোসারি","খাবার","বাজার","ডিম","মাছ","মাংস","চাল","ডাল","তেল","সবজি","চা","কফি","নাস্তা","মিষ্টি","বিরিয়ানি","দুধ"
+    ],
+    Transport:[
+      "transport","bus","rickshaw","rikshaw","uber","pathao","cng","fare","fuel","petrol","diesel","octane","parking",
+      "train","ticket","vara","bhara","travel","metro","auto","রিকশা","বাস","ভাড়া","সিএনজি","উবার","পাঠাও","ফুয়েল","পেট্রোল","ট্রেন"
+    ],
+    Rent:[
+      "rent","basha","house rent","flat rent","room rent","mess","mess rent","vara","bhara","বাসা ভাড়া","মেস ভাড়া","ঘর ভাড়া","বাড়ি ভাড়া"
+    ],
+    Shopping:[
+      "shopping","cloth","clothes","dress","shoe","shoes","shirt","pant","panjabi","sharee","saree","bag","mall","cosmetics",
+      "শপিং","জামা","কাপড়","জুতা","শার্ট","প্যান্ট","পাঞ্জাবি","শাড়ি","ব্যাগ"
+    ],
+    Bills:[
+      "bill","bills","electricity","electric","current","polli","desco","dpdc","gas","titas","water","wasa","internet","wifi","net","mobile bill","recharge","reload","flexiload",
+      "বিল","বিদ্যুৎ","গ্যাস","পানি","কারেন্ট","ইন্টারনেট","ওয়াইফাই","রিচার্জ"
+    ],
+    Entertainment:[
+      "movie","cinema","netflix","game","games","outing","fun","picnic","tour","party","concert","adda",
+      "সিনেমা","মুভি","বিনোদন","ঘুরতে","পিকনিক","ট্যুর","আড্ডা"
+    ],
+    Health:[
+      "medicine","doctor","hospital","pharmacy","medical","test","clinic","oushodh","osudh","fees","prescription","dentist",
+      "ঔষধ","ওষুধ","ডাক্তার","হাসপাতাল","ফার্মেসি","মেডিকেল","টেস্ট"
+    ]
+  };
+
+  const categoryByName = categories.find(c => aiTextHas(normalized, [c.toLowerCase()]) || aiTextHas(raw, [c.toLowerCase()]));
+  if(categoryByName) return categoryByName;
+
+  for(const category of categories){
+    const aliases = (builtIn[category] || []).map(a => a.toLowerCase());
+    if(aiTextHas(normalized, aliases) || aiTextHas(raw, aliases)){
+      return category;
+    }
+  }
+  return categories[0] || (kind==="income"?"Salary":"Other");
+}
+
+function aiCleanNote(rawText, detectedCategory, matchedBankNames){
+  let s = String(rawText || "").trim();
+  s = bnToEnDigits(s);
+  s = s.replace(/\b\d+[\d,]*(?:\.\d+)?\s*(?:k|taka|tk|\/-|টাকা)?\b/gi, " ");
+  s = s.replace(/[০-৯]+(?:\.[০-৯]+)?\s*(?:টাকা)?/g, " ");
+  s = s.replace(/[.,/#!$%^&*;:{}=\-_`~()?]/g, " ");
+  
+  const stopWords = new Set([
+    "aj", "aaj", "kal", "kaal", "today", "yesterday", "tomorrow", "আজ", "গতকাল", "আগামীকাল",
+    "taka", "tk", "টাকা", "টাকার", "diye", "die", "theke", "thekhe", "thekey", "দিলে", "দিয়ে", "থেকে",
+    "kinlam", "kinlm", "kinesi", "kinechi", "khoroch", "kharoch", "spent", "paid", "buy", "bought",
+    "dilam", "disi", "dichi", "gave", "korlam", "korsi", "korchi", "pelam", "paisi", "peyechi",
+    "received", "transfer", "pathalam", "pathano", "পাঠালাম", "কিনলাম", "কিনেছি", "খরচ", "দিলাম",
+    "করলাম", "পেলাম", "জমা", "cash", "cashe", "cash-e", "bkash", "bkashe", "nagad", "nagade",
+    "rocket", "rockete", "bank", "banke", "ক্যাশ", "ক্যাশে", "বিকাশ", "নগদ", "রকেট", "ব্যাংক",
+    "e", "er", "ta", "ti", "for", "on", "in", "and", "kori"
+  ]);
+
+  if(matchedBankNames && matchedBankNames.length){
+    matchedBankNames.forEach(b => {
+      s = s.replace(new RegExp("\\b"+aiEscapeRegex(b.toLowerCase())+"\\b", "gi"), " ");
+    });
+  }
+
+  const words = s.split(/\s+/).filter(w => {
+    const clean = w.toLowerCase().replace(/[^a-z0-9\u0980-\u09FF]/g, "");
+    return clean && !stopWords.has(clean);
+  });
+
+  if(words.length > 0 && words.length <= 8){
+    const cleaned = words.join(" ");
+    return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+  }
+  return detectedCategory || "Expense";
+}
+
+function aiDetectDate(text){
+  const normalized = aiNormalizedText(text);
+  const raw = String(text||"").toLowerCase();
+  const explicit = normalized.match(/\b(20\d{2}-\d{2}-\d{2})\b/);
+  if(explicit) return explicit[1];
+  if(aiTextHas(normalized, ["today","aj","aaj"]) || raw.includes("আজ")) return todayStr();
+  if(aiTextHas(normalized, ["yesterday","kal","gotokal"]) || raw.includes("গতকাল")) return aiShiftDate(-1);
+  if(aiTextHas(normalized, ["tomorrow","agamikal"]) || raw.includes("আগামীকাল")) return aiShiftDate(1);
+  return todayStr();
+}
+
+function parseNaturalLedgerText(text){
+  const raw = String(text||"").trim();
+  const normalized = aiNormalizedText(raw);
+  const bankMatches = aiFindBankMatches(raw);
+  const draft = defaultAIDraft();
+  const hints = [];
+  const errors = [];
+  if(!normalized){ errors.push("Type what happened first."); return { draft, hints, errors, confidence:"low", hasIntent:false }; }
+
+  const transferWords = ["transfer","trnsfer","sent","send","moved","move","pathalam","pathaisi","pathano","transfar","পাঠালাম","পাঠিয়েছি","ট্রান্সফার"];
+  const incomeWords = ["salary","income","bonus","refund","cashback","pelam","paisi","peyechi","received","receive","deposit","ay","aay","পেলাম","পেয়েছি","আয়","বেতন","বোনাস","জমা"];
+  const expenseWords = ["kinlam","kinlm","kinesi","kinechi","kharoch","khoroch","expense","bought","buy","paid","dilam","disi","dichi","gave","spent","vara","bhara","recharge","বিল","কিনলাম","কিনেছি","খরচ","দিলাম","দিয়েছি","ভাড়া"];
+
+  let kind = "expense";
+  if((bankMatches.length >= 2 && (aiTextHas(normalized, ["theke","from","to"]) || raw.includes("থেকে"))) || aiTextHas(normalized, transferWords)) kind = "transfer";
+  else if(aiTextHas(normalized, incomeWords) && !aiTextHas(normalized, expenseWords)) kind = "income";
+
+  draft.kind = kind;
+  draft.amount = aiExtractAmount(raw) || "";
+  draft.date = aiDetectDate(raw);
+
+  if(kind==="transfer"){
+    if(bankMatches[0]) draft.fromBankId = bankMatches[0].id;
+    if(bankMatches[1]) draft.toBankId = bankMatches[1].id;
+    draft.note = aiCleanNote(raw, "Transfer", bankMatches.map(b=>b.name));
+    draft.fee = aiExtractFee(raw) || "";
+    if(!draft.fromBankId || !draft.toBankId) hints.push("Mention both source and destination accounts for transfers.");
+    if(draft.fromBankId && draft.toBankId && draft.fromBankId===draft.toBankId){
+      errors.push("Transfer needs two different accounts.");
+    }
+  } else {
+    if(bankMatches[0]) draft.bankId = bankMatches[0].id;
+    else if(state.banks.length===1){
+      draft.bankId = state.banks[0].id;
+      hints.push("Used your only account automatically.");
+    } else {
+      const cash = state.banks.find(b=>b.name.toLowerCase().includes("cash"));
+      if(cash) draft.bankId = cash.id;
+      else if(state.banks.length) draft.bankId = state.banks[0].id;
+    }
+    draft.category = aiFindCategory(raw, kind);
+    draft.note = aiCleanNote(raw, draft.category, bankMatches.map(b=>b.name));
+  }
+
+  if(!draft.amount) errors.push("I could not find the amount.");
+  if(kind!=="transfer" && !draft.bankId && state.banks.length) errors.push("Choose the account before saving.");
+  if(kind==="transfer" && (!draft.fromBankId || !draft.toBankId)) errors.push("Choose both transfer accounts before saving.");
+  // True only when the text actually describes a ledger entry. Without this an
+  // unrelated sentence ("hello bhai") would be treated as a spending entry.
+  const hasIntent = bankMatches.length > 0 || aiTextHas(normalized, transferWords) || aiTextHas(normalized, incomeWords) || aiTextHas(normalized, expenseWords);
+  const confidence = errors.length ? "low" : hints.length ? "medium" : "high";
+  return { draft, hints, errors, confidence, hasIntent };
+}
+
+function aiConfidenceLabel(level){
+  return level==="high" ? "High confidence" : level==="medium" ? "Needs a quick review" : "Needs your confirmation";
+}
+function aiConfidenceColor(level){
+  return level==="high" ? "var(--green-light)" : level==="medium" ? "var(--gold)" : "var(--red)";
+}
+function aiCategoryOptions(kind, selected){
+  const cats = kind==="income" ? state.incomeCats : state.expenseCats;
+  return cats.map(c=>`<option value="${esc(c)}" ${selected===c?'selected':''}>${esc(c)}</option>`).join("");
+}
+function aiApplyParsedResult(text){
+  const result = parseNaturalLedgerText(text);
+  state.aiAssistant.text = text;
+  state.aiAssistant.parsed = result.draft;
+  state.aiAssistant.hints = result.hints;
+  state.aiAssistant.errors = result.errors;
+  state.aiAssistant.confidence = result.confidence;
+}
+function updateAIAssistantVisibility(){
+  const kindEl = document.getElementById("ai-kind");
+  const kind = kindEl ? kindEl.value : "expense";
+  const single = document.getElementById("ai-single-fields");
+  const transfer = document.getElementById("ai-transfer-fields");
+  const category = document.getElementById("ai-category");
+  if(single) single.style.display = kind==="transfer" ? "none" : "grid";
+  if(transfer) transfer.style.display = kind==="transfer" ? "grid" : "none";
+  if(category){
+    const current = category.value;
+    category.innerHTML = aiCategoryOptions(kind, current);
+    if(!category.value){
+      const first = kind==="income" ? state.incomeCats[0] : state.expenseCats[0];
+      if(first) category.value = first;
+    }
+  }
+}
+function readAIAssistantDraftFromForm(){
+  const kind = document.getElementById("ai-kind").value;
+  return {
+    kind,
+    amount: parseFloat(document.getElementById("ai-amount").value) || "",
+    date: document.getElementById("ai-date").value || todayStr(),
+    bankId: document.getElementById("ai-bank") ? document.getElementById("ai-bank").value : "",
+    fromBankId: document.getElementById("ai-from-bank") ? document.getElementById("ai-from-bank").value : "",
+    toBankId: document.getElementById("ai-to-bank") ? document.getElementById("ai-to-bank").value : "",
+    category: document.getElementById("ai-category") ? document.getElementById("ai-category").value : "",
+    note: document.getElementById("ai-note").value.trim()
+  };
+}
+function validateAIDraft(draft){
+  const errors = [];
+  if(!draft.amount || draft.amount<=0) errors.push("Enter a valid amount.");
+  if(!draft.date) errors.push("Choose a date.");
+  if(draft.kind==="transfer"){
+    if(!draft.fromBankId || !draft.toBankId) errors.push("Choose both transfer accounts.");
+    if(draft.fromBankId && draft.toBankId && draft.fromBankId===draft.toBankId) errors.push("Transfer accounts must be different.");
+  } else {
+    if(!draft.bankId) errors.push("Choose an account.");
+    if(!draft.category) errors.push("Choose a category.");
+  }
+  return errors;
+}
+
+/* ---------------- Chat Assistant Logic & Views ---------------- */
+function getGeminiKey(){ return localStorage.getItem(GEMINI_API_KEY_STORAGE) || ""; }
+function setGeminiKey(key){ localStorage.setItem(GEMINI_API_KEY_STORAGE, key.trim()); }
+function clearGeminiKey(){
+  localStorage.removeItem(GEMINI_API_KEY_STORAGE);
+  localStorage.removeItem(GEMINI_MODEL_STORAGE);
+}
+function getPreferredGeminiModel(){ return localStorage.getItem(GEMINI_MODEL_STORAGE) || ""; }
+function setPreferredGeminiModel(model){ if(model) localStorage.setItem(GEMINI_MODEL_STORAGE, model); }
+function looksLikeMaskedGeminiKey(key){ return !key || /•|…|\.{3,}/.test(key); }
+
+function loadAIChatMessages(){
+  try{
+    const raw = localStorage.getItem(CHAT_STORAGE_KEY);
+    if(raw) return JSON.parse(raw);
+  }catch(_){}
+  return [getWelcomeMessage()];
+}
+
+function getWelcomeMessage(){
+  const hasKey = !!getGeminiKey();
+  return {
+    id: "welcome-1",
+    sender: "ai",
+    timestamp: Date.now(),
+    text: hasKey
+      ? "👋 **Hello! I am your Gemini AI Financial Assistant.**\n\nI can understand Bangla, Banglish, and English. Just tell me what happened and I'll record it automatically!\n\n**Try these:**\n• *aj cash 200 taka diye grocery kinlam*\n• *bkash e 500 taka mobile recharge dilam*\n• *salary pelam 45000 bank e*\n• *bkash theke nagad e 1000 taka transfer*\n• *today koto taka khoroch holo?*\n• *amar balance koto?*"
+      : "👋 **Hello! I am your AI Financial Assistant.**\n\nTo enable **Gemini AI** (smarter, more natural understanding), tap **⚡ Connect Gemini AI** below.\n\nOr you can use me right now with built-in smart parsing — just type your transactions!\n\n**Examples:**\n• *aj cash 200 taka diye grocery kinlam*\n• *salary pelam 45000 bank e*\n• *amar balance koto?*"
+  };
+}
+
+function saveAIChatMessages(messages){
+  try{
+    localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify((messages||[]).slice(-80)));
+  }catch(_){}
+}
+
+/* -------- Build Gemini system prompt with user's financial context -------- */
+function buildGeminiSystemPrompt(){
+  const bankList = state.banks.length
+    ? state.banks.map(b => `  - "${b.name}" (id: ${b.id}, balance: ${taka(b.balance)}${b.isCard?" [credit card]":""})`).join("\n")
+    : "  (no accounts added yet)";
+  const expCats = (state.expenseCats||[]).join(", ");
+  const incCats = (state.incomeCats||[]).join(", ");
+  const today = todayStr();
+  const todayExpenses = (state.transactions||[]).filter(t => t.date === today && t.type === "expense");
+  const todaySpend = todayExpenses.reduce((s,t)=>s+t.amount, 0);
+  const recent = (state.transactions||[]).slice().sort((a,b)=>(b.createdAt||0)-(a.createdAt||0)).slice(0,8).map(t=>{
+    if(t.type==="transfer") return `  - transfer ${taka(t.amount)} ${bankName_(t.fromBankId)} → ${bankName_(t.toBankId)} on ${t.date}${t.note?" ("+t.note+")":""}`;
+    return `  - ${t.type} ${taka(t.amount)} ${t.category||""} via ${bankName_(t.bankId)} on ${t.date}${t.note?" ("+t.note+")":""}`;
+  }).join("\n") || "  (none yet)";
+
+  return `You are an AI financial assistant embedded in a personal finance ledger app called "My Ledger".
+The user communicates in Bangla, Banglish (Romanized Bengali), English, or a mix. Understand all these naturally.
+
+Today's date: ${today}
+Today's recorded expenses: ${taka(todaySpend)} (${todayExpenses.length} item(s))
+Net worth: ${taka(totalBalance())}
+
+USER'S BANK ACCOUNTS:
+${bankList}
+
+EXPENSE CATEGORIES: ${expCats}
+INCOME CATEGORIES: ${incCats}
+
+RECENT LEDGER ENTRIES:
+${recent}
+
+YOUR JOB:
+Analyze the user's message and respond with a JSON object inside a markdown code block, followed by a friendly reply.
+
+If the user is just chatting, asking general questions, or talking about their finances without a specific ledger entry, use "action": "chat".
+
+RESPONSE FORMAT (always follow this):
+\`\`\`json
+{
+  "action": "record_transaction" | "record_transfer" | "query_balance" | "query_spending" | "help" | "chat",
+  "data": {
+    "type": "expense" | "income",
+    "amount": number,
+    "bankId": "<exact id from account list above, or empty string>",
+    "category": "<exact category name from lists above>",
+    "note": "<short clean note, 1-5 words, in English>",
+    "date": "YYYY-MM-DD"
+  },
+  "reply": "<your friendly, human-like reply. If you recorded something, confirm it. If you answered a query, be helpful. If it's just chat, be a supportive financial companion. Match user's language (Bangla/Banglish/English)>"
+}
+\`\`\`
+
+RULES:
+- BE HUMAN-LIKE: Don't just be a parser. Talk like a helpful assistant.
+- EMOTIONS: If the user is saving a lot, congratulate them. If they are overspending, give a gentle nudge.
+- CONTEXT: Use the account balances and recent entries provided below to give specific advice if asked.
+- LANGUAGE: If the user writes in Banglish, reply in Banglish or Bangla. Be natural.
+- ERRORS: If you are not sure about an account, ask for clarification in the "reply" but still output the JSON with your best guess.
+- ALWAYS output valid JSON in a \`\`\`json block
+- Match bankId exactly from the account list (use the id field)
+- If user says "cash", match the account with "cash" in its name
+- If user says "bkash", match the bKash account
+- Date: "aj"/"aaj"/"today"/"আজ" = ${today}; "kal"/"yesterday"/"গতকাল" = yesterday
+- Amount: extract numbers. "200 taka", "২০০ টাকা", "2k" = 2000
+- Category: pick the CLOSEST match from the category lists
+- Note: clean 1-5 word English summary (e.g. "Grocery shopping", "Mobile recharge", "Salary")
+- reply: always warm, brief, match the user's language
+- For "kinlam"/"kharoch"/"expense"/"dilam"/"paid" → record_transaction expense
+- For "pelam"/"income"/"salary"/"received"/"deposit" → record_transaction income
+- For "transfer"/"pathalam"/"theke...te" → record_transfer
+- If account is unclear and only 1 account exists, use it
+- If no account matches, leave bankId as ""`;
+}
+
+function extractGeminiJson(rawText){
+  if(!rawText) return null;
+  const block = String(rawText).match(/```(?:json)?\s*([\s\S]*?)```/);
+  const candidate = block ? block[1] : String(rawText);
+  const start = candidate.indexOf("{");
+  const end = candidate.lastIndexOf("}");
+  if(start < 0 || end <= start) return null;
+  try{ return JSON.parse(candidate.slice(start, end+1)); }
+  catch(_){ return null; }
+}
+
+function geminiModelsToTry(){
+  const preferred = getPreferredGeminiModel();
+  const list = GEMINI_MODELS.slice();
+  if(preferred){
+    const idx = list.indexOf(preferred);
+    if(idx > 0){ list.splice(idx, 1); list.unshift(preferred); }
+    else if(idx < 0) list.unshift(preferred);
+  }
+  return list;
+}
+
+async function geminiGenerate(apiKey, model, body){
+  let lastResp, lastData;
+  for(const version of ["v1beta", "v1"]){
+    try {
+      const resp = await fetch(
+        `https://generativelanguage.googleapis.com/${version}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        }
+      );
+      const data = await resp.json().catch(()=>({}));
+      if(resp.ok) return { resp, data };
+      lastResp = resp; lastData = data;
+      // If it's not a 404, don't bother trying the next version for THIS model
+      if(resp.status !== 404) break;
+    } catch(e) {
+      if(version === "v1") throw e;
+    }
+  }
+  return { resp: lastResp, data: lastData };
+}
+
+function classifyGeminiHttpError(status, msg){
+  const text = String(msg || "Unknown error");
+  if(status === 400 && /API[_ ]KEY|api key|invalid/i.test(text)) return { fatal:true, error:"Invalid API key. Open ⚡ Connect Gemini AI and paste a new key from Google AI Studio." };
+  if(status === 403) return { fatal:true, error:"This API key was rejected. Enable the Gemini API in Google AI Studio, then try again." };
+  if(status === 429) return { fatal:true, error:"Rate limit reached. Wait a moment, or use the built-in parser until the free quota resets." };
+  return { fatal:false, error:`Gemini API error: ${text}` };
+}
+
+/* -------- Call Gemini API -------- */
+async function callGeminiAI(userText, opts){
+  const apiKey = (opts && opts.apiKey) || getGeminiKey();
+  if(!apiKey) return null;
+  const ping = !!(opts && opts.ping);
+
+  const contents = [];
+  if(!ping){
+    const recentMsgs = (state.aiChatMessages||[]).filter(m => m.id !== "typing" && m.id !== "welcome-1").slice(-8);
+    for(const msg of recentMsgs){
+      if(msg.sender === "user" && msg.text){
+        contents.push({ role:"user", parts:[{ text: msg.text }] });
+      } else if(msg.sender === "ai" && msg.text){
+        contents.push({ role:"model", parts:[{ text: msg.text.slice(0, 400) }] });
+      }
+    }
+  }
+  contents.push({ role:"user", parts:[{ text: ping ? "Reply with JSON only: {\"action\":\"chat\",\"reply\":\"ok\"}" : userText }] });
+
+  const body = {
+    system_instruction: { parts:[{ text: ping ? "Return valid JSON only." : buildGeminiSystemPrompt() }] },
+    contents,
+    generationConfig: {
+      temperature: ping ? 0 : 0.2,
+      maxOutputTokens: ping ? 64 : 768,
+      responseMimeType: "application/json"
+    }
+  };
+
+  const models = geminiModelsToTry();
+  let lastError = "Could not reach Gemini.";
+  let lastFatal = false;
+
+  for(const model of models){
+    try{
+      let { resp, data } = await geminiGenerate(apiKey, model, body);
+      if(!resp.ok){
+        const msg = data?.error?.message || "Unknown error";
+        const classified = classifyGeminiHttpError(resp.status, msg);
+        lastError = classified.error;
+        lastFatal = classified.fatal;
+        if(classified.fatal) return { error: classified.error, fatal:true };
+        // Model missing / not supported JSON mime — try without mime, then next model
+        if(/not found|not supported|mime|responseMimeType/i.test(msg) || resp.status === 404){
+          const plainBody = JSON.parse(JSON.stringify(body));
+          delete plainBody.generationConfig.responseMimeType;
+          ({ resp, data } = await geminiGenerate(apiKey, model, plainBody));
+          if(!resp.ok){
+            const msg2 = data?.error?.message || "Unknown error";
+            const c2 = classifyGeminiHttpError(resp.status, msg2);
+            lastError = c2.error;
+            lastFatal = c2.fatal;
+            if(c2.fatal) return { error: c2.error, fatal:true };
+            continue;
+          }
+        } else {
+          continue;
+        }
+      }
+
+      const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      const parsed = extractGeminiJson(rawText);
+      if(!parsed){
+        lastError = "Could not parse AI response.";
+        lastFatal = false;
+        continue;
+      }
+      setPreferredGeminiModel(model);
+      return { ok:true, parsed, rawText, model };
+    } catch(err){
+      lastFatal = false;
+      lastError = err && err.name === "SyntaxError"
+        ? "AI response was not valid JSON. Try rephrasing."
+        : "Network error. Check your internet connection, or use the built-in parser without an API key.";
+    }
+  }
+  return { error: lastError, fatal: lastFatal };
+}
+
+function resolveChatBankId(value, userText){
+  const raw = String(value || "").trim();
+  if(raw && state.banks.some(b => b.id === raw)) return raw;
+  if(raw){
+    const lower = raw.toLowerCase();
+    const byName = state.banks.find(b => {
+      const n = b.name.toLowerCase();
+      return n === lower || n.includes(lower) || lower.includes(n);
+    });
+    if(byName) return byName.id;
+  }
+  const guessed = aiFindBankMatches((raw ? raw + " " : "") + (userText || ""));
+  if(guessed.length) return guessed[0].id;
+  if(state.banks.length === 1) return state.banks[0].id;
+  const cash = state.banks.find(b => b.name.toLowerCase().includes("cash"));
+  return cash ? cash.id : "";
+}
+
+/* -------- Execute action from Gemini response -------- */
+function executeGeminiAction(parsed, userText){
+  const action = parsed.action;
+  const data = parsed.data || {};
+  const reply = parsed.reply || "";
+
+  if(action === "query_balance") return handleBalanceQuery(aiNormalizedText(userText));
+  if(action === "query_spending") return handleSpendingQuery(aiNormalizedText(userText));
+  if(action === "help") return handleHelpQuery();
+  if(action === "chat"){
+    return { id: uid(), sender: "ai", timestamp: Date.now(), text: reply || "I'm here to help with your finances!" };
+  }
+
+  if(action === "record_transaction"){
+    if(!data.amount || data.amount <= 0){
+      const local = parseNaturalLedgerText(userText);
+      if(local.draft && local.draft.amount) return reviewDraftFromChat(local.draft, userText);
+      return {
+        id: uid(), sender:"ai", timestamp:Date.now(),
+        text: reply || "I couldn't find the amount. Please mention it clearly, e.g. *200 taka diye grocery kinlam*."
+      };
+    }
+    let bankId = resolveChatBankId(data.bankId, userText);
+
+    const cats = data.type === "income" ? state.incomeCats : state.expenseCats;
+    let category = data.category || "";
+    if(category && !cats.includes(category)){
+      // fuzzy match
+      const lower = category.toLowerCase();
+      const match = cats.find(c => c.toLowerCase().includes(lower) || lower.includes(c.toLowerCase()));
+      category = match || cats[0] || "";
+    }
+    if(!category) category = cats[0] || "";
+
+    if(!state.banks.length){
+      return reviewDraftFromChat({
+        kind: data.type === "income" ? "income" : "expense",
+        amount: data.amount, bankId: "", category,
+        note: data.note || category, date: data.date || todayStr(), fee: ""
+      }, userText);
+    }
+
+    return reviewDraftFromChat({
+      kind: data.type === "income" ? "income" : "expense",
+      amount: data.amount,
+      bankId: bankId || (state.banks[0] ? state.banks[0].id : ""),
+      category,
+      note: data.note || category,
+      date: data.date || todayStr(),
+      fee: ""
+    }, userText);
+  }
+
+  if(action === "record_transfer"){
+    let fromId = resolveChatBankId(data.fromBankId, userText);
+    let toId = resolveChatBankId(data.toBankId, userText);
+    const guessed = aiFindBankMatches(userText);
+    if(guessed.length >= 2){
+      if(!data.fromBankId) fromId = guessed[0].id;
+      if(!data.toBankId) toId = guessed[1].id;
+    }
+    if(!fromId || !toId || !data.amount){
+      return {
+        id:uid(), sender:"ai", timestamp:Date.now(),
+        text: reply || "For a transfer, please mention both accounts and the amount."
+      };
+    }
+    if(fromId === toId){
+      return {
+        id:uid(), sender:"ai", timestamp:Date.now(),
+        text: "Source and destination accounts must be different for a transfer."
+      };
+    }
+    const fee = parseFloat(data.fee) > 0 ? parseFloat(data.fee) : (aiExtractFee(userText) || "");
+    return reviewDraftFromChat({
+      kind:"transfer",
+      amount:data.amount,
+      fromBankId:fromId,
+      toBankId:toId,
+      fee,
+      note:data.note || "Transfer",
+      date:data.date || todayStr()
+    }, userText);
+  }
+
+  const local = parseNaturalLedgerText(userText);
+  if(local.draft && local.draft.amount && !local.errors.length){
+    return reviewDraftFromChat(local.draft, userText);
+  }
+
+  return {
+    id:uid(), sender:"ai", timestamp:Date.now(),
+    text: reply || "I'm here to help! Tell me a transaction to record."
+  };
+}
+
+function isSpendingQuery(normalized){
+  return aiTextHas(normalized, [
+    "koto khoroch", "koto taka khoroch", "aj koto", "today spend", "today expense",
+    "ajker khoroch", "spend today", "how much spent", "daily spend", "ajke koto",
+    "কত খরচ", "আজ কত খরচ", "আজকের খরচ"
+  ]);
+}
+
+function handleSpendingQuery(normalized){
+  const targetDate = aiDetectDate(normalized);
+  const isToday = targetDate === todayStr();
+  const txns = state.transactions.filter(t => t.date === targetDate && t.type === "expense");
+  const total = txns.reduce((sum, t) => sum + t.amount, 0);
+
+  if(!txns.length){
+    return {
+      id: uid(),
+      sender: "ai",
+      timestamp: Date.now(),
+      text: `📊 You haven't recorded any expenses for **${isToday ? "today" : targetDate}** yet.`
+    };
+  }
+
+  const catMap = {};
+  txns.forEach(t => { catMap[t.category] = (catMap[t.category] || 0) + t.amount; });
+  const catList = Object.entries(catMap).map(([c, amt]) => `• ${c}: **${taka(amt)}**`).join("\n");
+
+  return {
+    id: uid(),
+    sender: "ai",
+    timestamp: Date.now(),
+    text: `📊 **Expenses for ${isToday ? "Today" : targetDate}:**\n**Total:** **${taka(total)}** across ${txns.length} transaction(s).\n\n**Breakdown:**\n${catList}`
+  };
+}
+
+function isBalanceQuery(normalized){
+  return aiTextHas(normalized, [
+    "amar balance", "balance koto", "total balance", "cash koto", "bkash koto",
+    "account balance", "net worth", "balance check", "টাকা আছে", "ব্যালেন্স"
+  ]);
+}
+
+function handleBalanceQuery(normalized){
+  if(!state.banks.length){
+    return {
+      id: uid(),
+      sender: "ai",
+      timestamp: Date.now(),
+      text: "💰 You don't have any accounts added yet. Tap **Accounts** tab to add one!"
+    };
+  }
+  const lines = state.banks.map(b => `• **${b.name}**: ${taka(b.balance)}`);
+  return {
+    id: uid(),
+    sender: "ai",
+    timestamp: Date.now(),
+    text: `💰 **Account Balances:**\n${lines.join("\n")}\n\n**Total Net Worth:** **${taka(totalBalance())}**\n**Available Liquidity:** **${taka(availableLiquidity())}**`
+  };
+}
+
+function isHelpQuery(normalized){
+  return aiTextHas(normalized, ["help", "ki korte paro", "kemne use korbo", "sahajjo", "সাহায্য", "কী করতে পারো"]);
+}
+
+function handleHelpQuery(){
+  return {
+    id: uid(),
+    sender: "ai",
+    timestamp: Date.now(),
+    text: `🤖 **How to use AI Chat:**\n\nYou can type naturally in **Bangla, Banglish, or English** to log transactions instantly.\n\n**Examples:**\n• *aj cash 200 taka diye grocery kinlam*\n• *bkash e 500 taka mobile recharge dilam*\n• *rickshaw vara dilam 60 taka cash*\n• *salary pelam 45000 bank e*\n• *bkash theke nagad e 1000 taka transfer korlam*\n• *aj koto taka khoroch holo?*\n• *amar balance koto?*\n\nEvery logged transaction can be edited or undone with 1 click!`
+  };
+}
+
+// Nothing is written to the ledger straight away: both the built-in parser and
+// Gemini produce a draft that the user reviews, edits and confirms first.
+function reviewDraftFromChat(draft, rawText){
+  if(draft.kind === "transfer"){
+    if(!draft.fromBankId || !draft.toBankId){
+      return {
+        id: uid(),
+        sender: "ai",
+        timestamp: Date.now(),
+        text: "For transfers, please mention both accounts (for example: *bkash theke nagad e 500 taka transfer*)."
+      };
+    }
+    if(draft.fromBankId === draft.toBankId){
+      return {
+        id: uid(),
+        sender: "ai",
+        timestamp: Date.now(),
+        text: "Source and destination accounts must be different for a transfer."
+      };
+    }
+    return buildReviewMessage(draft);
+  }
+
+  // Expense or Income
+  if(!state.banks.length){
+    state.aiChatContext = { pendingSave: draft };
+    return {
+      id: uid(),
+      sender: "ai",
+      timestamp: Date.now(),
+      text: `I understood: **${draft.kind === "income" ? "Income" : "Expense"} of ${taka(draft.amount)}** (${draft.category}), but you haven't created any accounts yet.`,
+      actionResult: {
+        type: "account_needed",
+        data: draft
+      }
+    };
+  }
+
+  return buildReviewMessage(draft);
+}
+
+// Turn a draft into an editable "review before saving" card. Everything the user
+// can change (type, account, category, amount, fee, date, note) lives on the
+// message itself, so edits survive re-renders of the chat.
+function buildReviewMessage(draft){
+  const kind = draft.kind === "transfer" ? "transfer" : (draft.kind === "income" ? "income" : "expense");
+  const cats = kind === "income" ? state.incomeCats : state.expenseCats;
+  let category = draft.category || "";
+  if(kind !== "transfer" && !cats.includes(category)) category = cats[0] || "";
+  let bankId = draft.bankId || "";
+  if(kind !== "transfer" && !bankId){
+    const cash = state.banks.find(b => b.name.toLowerCase().includes("cash"));
+    bankId = cash ? cash.id : (state.banks[0] ? state.banks[0].id : "");
+  }
+  return {
+    id: uid(),
+    sender: "ai",
+    timestamp: Date.now(),
+    text: "📝 **Please review this entry.** Nothing is saved until you tap **Save Entry** — change any field that looks wrong.",
+    review: {
+      kind,
+      amount: draft.amount || "",
+      date: draft.date || todayStr(),
+      bankId,
+      fromBankId: draft.fromBankId || "",
+      toBankId: draft.toBankId || "",
+      category,
+      note: draft.note || (kind === "transfer" ? "Transfer" : kind === "income" ? "Income" : "Expense"),
+      fee: draft.fee || ""
+    }
+  };
+}
+
+async function executeAIChatInput(rawText){
+  const text = (rawText || "").trim();
+  if(!text || aiChatBusy) return;
+  aiChatBusy = true;
+
+  const userMsg = { id:uid(), sender:"user", text, timestamp:Date.now() };
+  state.aiChatMessages.push(userMsg);
+
+  const geminiKey = getGeminiKey();
+
+  try{
+    if(geminiKey){
+      const typingMsg = { id:"typing", sender:"ai", timestamp:Date.now(), typing:true, text:"" };
+      state.aiChatMessages.push(typingMsg);
+      saveAIChatMessages(state.aiChatMessages.filter(m => m.id !== "typing"));
+      render();
+      scrollChatToBottom();
+
+      const result = await callGeminiAI(text);
+      state.aiChatMessages = state.aiChatMessages.filter(m => m.id !== "typing");
+
+      let aiMsg;
+      if(!result || result.error){
+        if(result && result.fatal){
+          aiMsg = { id:uid(), sender:"ai", timestamp:Date.now(), text:`⚠️ **Gemini Error:** ${result.error}` };
+        } else {
+          const fallback = localFallbackAI(text);
+          const errText = (result && result.error) || "Could not reach Gemini.";
+          if(!fallback.actionResult && !fallback.review){
+            aiMsg = {
+              id:uid(), sender:"ai", timestamp:Date.now(),
+              text: `⚠️ ${errText}\n\n` + (fallback.text || "Try again, or use the built-in examples below.")
+            };
+          } else {
+            aiMsg = fallback;
+            // Only prepend the error if the user has an API key set but it failed.
+            // If the fallback parser is confident, we make the error less intrusive.
+            const prefix = `[Gemini offline, using Local AI] `;
+            aiMsg.text = prefix + (fallback.text || "");
+          }
+        }
+      } else {
+        aiMsg = executeGeminiAction(result.parsed, text);
+      }
+      state.aiChatMessages.push(aiMsg);
+    } else {
+      const aiMsg = localFallbackAI(text);
+      state.aiChatMessages.push(aiMsg);
+    }
+  } finally {
+    aiChatBusy = false;
+    saveAIChatMessages(state.aiChatMessages.filter(m => m.id !== "typing"));
+    render();
+    scrollChatToBottom();
+  }
+}
+
+function localFallbackAI(text){
+  const normalized = aiNormalizedText(text);
+
+  if(state.aiChatContext && state.aiChatContext.waitingFor === "amount"){
+    const amt = aiExtractAmount(text);
+    if(amt && amt > 0){
+      const draft = state.aiChatContext.draft;
+      draft.amount = amt;
+      state.aiChatContext = null;
+      return reviewDraftFromChat(draft, text);
+    }
+    // The reply wasn't an amount (a question, a new entry, ...). Drop the pending
+    // question instead of swallowing every message that follows it.
+    state.aiChatContext = null;
+  }
+  if(isSpendingQuery(normalized)) return handleSpendingQuery(normalized);
+  if(isBalanceQuery(normalized)) return handleBalanceQuery(normalized);
+  if(isHelpQuery(normalized)) return handleHelpQuery();
+
+  const parsed = parseNaturalLedgerText(text);
+  const draft = parsed.draft;
+  if(!draft.amount){
+    if(parsed.hasIntent){
+      state.aiChatContext = { waitingFor:"amount", draft };
+      const what = draft.note || (draft.kind === "transfer" ? "a transfer" : draft.kind === "income" ? "income" : "an expense");
+      return { id:uid(), sender:"ai", timestamp:Date.now(), text:`Got it! You mentioned **${what}**, but how much was it? Please enter the amount (e.g. *200 taka*).` };
+    }
+    return { id:uid(), sender:"ai", timestamp:Date.now(), text:"I couldn't detect the amount. Please say something like:\n• *aj cash 200 taka diye grocery kinlam*\n• *bkash theke 1500 taka electricity bill*\n• *salary pelam 35000 bank e*" };
+  }
+  return reviewDraftFromChat(draft, text);
+}
+
+function scrollChatToBottom(){
+  setTimeout(() => {
+    const el = document.getElementById("chat-messages-container");
+    if(el) el.scrollTop = el.scrollHeight;
+    const input = document.getElementById("chat-input-field");
+    if(input) input.focus();
+  }, 40);
+}
+
+function renderAIChatTab(){
+  return `<div class="chat-view">${renderAIChatInner(false)}</div>`;
+}
+
+function renderAIChatModal(){
+  return `<div class="chat-view in-modal">${renderAIChatInner(true)}</div>`;
+}
+
+function renderAIChatInner(isModal){
+  const msgs = state.aiChatMessages || [];
+  const hasKey = !!getGeminiKey();
+  const statusBadge = hasKey
+    ? `<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:3px 9px;border-radius:10px;background:color-mix(in srgb,var(--green-light) 15%,transparent);color:var(--green-light);border:1px solid color-mix(in srgb,var(--green-light) 30%,transparent);font-weight:600;">✨ Gemini AI</span>`
+    : `<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:3px 9px;border-radius:10px;background:var(--hover);color:var(--muted);border:1px solid var(--border);">Built-in</span>`;
+
+  return `
+    <div class="chat-topbar">
+      <div class="chat-bot-meta">
+        <div>
+          <div class="chat-bot-title" style="display:flex;align-items:center;gap:8px;">AI Financial Assistant ${statusBadge}</div>
+          <div class="chat-bot-sub">Bangla • Banglish • English</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:6px;align-items:center;">
+        <button class="chat-mini-btn" data-action="open-gemini-setup" title="${hasKey ? 'Change/Remove Gemini API key' : 'Connect Gemini AI for smarter understanding'}">
+          ${hasKey ? '⚙️ API Key' : '⚡ Connect Gemini AI'}
+        </button>
+        <button class="chat-mini-btn" data-action="clear-ai-chat" title="Clear chat history">${ICON.trash}</button>
+      </div>
+    </div>
+
+    ${!hasKey ? `
+    <div style="padding:10px 14px;background:color-mix(in srgb,var(--gold) 12%,transparent);border-bottom:1px solid color-mix(in srgb,var(--gold) 25%,transparent);display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <span style="font-size:12.5px;color:var(--ink);flex:1;">⚡ <strong>Get smarter AI</strong> — add a free Gemini API key for natural language understanding in any language.</span>
+      <button class="chat-mini-btn" data-action="open-gemini-setup" style="border-color:var(--gold);color:var(--gold);white-space:nowrap;">Set Up Free API Key →</button>
+    </div>` : ""}
+
+    <div class="chat-msgs" id="chat-messages-container">
+      ${msgs.map(m => renderChatMessageBubble(m)).join("")}
+    </div>
+
+    <div class="chat-chips">
+      <button class="chat-chip-btn" data-action="ai-chip-prompt" data-text="aj cash 200 taka diye grocery kinlam">🛒 aj cash 200 taka grocery</button>
+      <button class="chat-chip-btn" data-action="ai-chip-prompt" data-text="bkash e 500 taka mobile recharge dilam">📱 bkash 500 recharge</button>
+      <button class="chat-chip-btn" data-action="ai-chip-prompt" data-text="rickshaw vara 60 taka cash">🛺 rickshaw vara 60 cash</button>
+      <button class="chat-chip-btn" data-action="ai-chip-prompt" data-text="salary pelam 40000 bank e">💰 salary 40000 bank e</button>
+      <button class="chat-chip-btn" data-action="ai-chip-prompt" data-text="bkash theke nagad e 1000 taka transfer korlam">🔄 bkash to nagad 1000</button>
+      <button class="chat-chip-btn" data-action="ai-chip-prompt" data-text="aj koto taka khoroch holo?">📊 aj koto khoroch holo?</button>
+      <button class="chat-chip-btn" data-action="ai-chip-prompt" data-text="amar balance koto?">💰 amar balance koto?</button>
+    </div>
+
+    <div class="chat-input-bar">
+      <input type="text" id="chat-input-field" class="chat-input-field"
+        placeholder="${hasKey ? 'Ask anything or describe a transaction...' : 'Type: aj cash 200 taka diye grocery kinlam...'}"
+        autocomplete="off" ${aiChatBusy ? "disabled" : ""} />
+      <button class="chat-send-btn" id="chat-send-btn" data-action="send-ai-chat" title="Send message" ${aiChatBusy ? "disabled" : ""}>${ICON.send}</button>
+    </div>
+  `;
+}
+
+function renderChatMessageBubble(m){
+  // Typing indicator
+  if(m.typing){
+    return `
+      <div class="chat-row ai">
+        <div class="chat-bubble" style="padding:12px 16px;">
+          <div style="display:flex;gap:5px;align-items:center;">
+            <span style="width:7px;height:7px;border-radius:50%;background:var(--muted);animation:typingDot 1.2s infinite 0s;display:inline-block;"></span>
+            <span style="width:7px;height:7px;border-radius:50%;background:var(--muted);animation:typingDot 1.2s infinite .2s;display:inline-block;"></span>
+            <span style="width:7px;height:7px;border-radius:50%;background:var(--muted);animation:typingDot 1.2s infinite .4s;display:inline-block;"></span>
+            <span style="font-size:11px;color:var(--muted);margin-left:4px;">Gemini AI is thinking...</span>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  const isUser = m.sender === "user";
+  const timeStr = m.timestamp ? new Date(m.timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : "";
+  
+  let txHtml = "";
+  if(m.review){
+    txHtml = renderChatReviewCard(m);
+  } else if(m.actionResult){
+    const ar = m.actionResult;
+    if(ar.type === "transaction_created"){
+      const isUndone = ar.undone;
+      const isIncome = ar.data && ar.data.type === "income";
+      const amtColor = isUndone ? "var(--muted)" : isIncome ? "var(--green-light)" : "var(--red)";
+      const bName = bankName_(ar.data ? ar.data.bankId : "");
+      
+      txHtml = `
+        <div class="chat-tx-box" style="${isUndone?'opacity:0.6;filter:grayscale(0.8);':''}">
+          <div class="chat-tx-head">
+            <span class="chat-tx-badge" style="color:${isUndone?'var(--muted)':'var(--green-light)'};">
+              ${isUndone ? "❌ Transaction Undone" : `${ICON.check} Transaction Logged`}
+            </span>
+            <span class="chat-tx-amt" style="color:${amtColor};">
+              ${isIncome ? "+" : "-"}${taka(ar.data ? ar.data.amount : 0)}
+            </span>
+          </div>
+          <div class="chat-tx-grid">
+            <div>🏷️ Category: <strong>${esc(ar.data ? ar.data.category : "Expense")}</strong></div>
+            <div>🏦 Account: <strong>${esc(bName)}</strong></div>
+            <div>📅 Date: <strong>${esc(ar.data ? ar.data.date : todayStr())}</strong></div>
+            <div>📝 Note: <strong>${esc((ar.data && ar.data.note) ? ar.data.note : "-")}</strong></div>
+          </div>
+          ${!isUndone ? `
+            <div class="chat-tx-btn-row">
+              <button class="chat-mini-btn" data-action="edit-txn" data-id="${ar.txnId}">${ICON.edit} Edit</button>
+              <button class="chat-mini-btn danger" data-action="ai-undo-txn" data-id="${ar.txnId}">${ICON.undo} Undo</button>
+              <button class="chat-mini-btn" data-action="set-tab" data-tab="transactions">📒 View in Ledger</button>
+            </div>
+            ${state.banks.length > 1 ? `
+              <div style="font-size:11px;color:var(--muted);margin-top:4px;">
+                Change account:
+                <span style="display:inline-flex;gap:4px;flex-wrap:wrap;margin-top:2px;">
+                  ${state.banks.filter(b=>b.id!==ar.data.bankId).map(b=>`
+                    <button class="chat-mini-btn" data-action="ai-change-bank" data-txnid="${ar.txnId}" data-bankid="${b.id}">${esc(b.name)}</button>
+                  `).join("")}
+                </span>
+              </div>
+            ` : ""}
+          ` : `
+            <div style="font-size:11.5px;color:var(--muted);font-style:italic;">This transaction was reversed and deleted.</div>
+          `}
+        </div>
+      `;
+    } else if(ar.type === "transfer_created"){
+      const isUndone = ar.undone;
+      const fromName = bankName_(ar.data ? ar.data.fromBankId : "");
+      const toName = bankName_(ar.data ? ar.data.toBankId : "");
+      txHtml = `
+        <div class="chat-tx-box" style="${isUndone?'opacity:0.6;filter:grayscale(0.8);':''}">
+          <div class="chat-tx-head">
+            <span class="chat-tx-badge" style="color:var(--purple);">
+              ${isUndone ? "❌ Transfer Undone" : `${ICON.transfer} Transfer Logged`}
+            </span>
+            <span class="chat-tx-amt" style="color:var(--purple);">
+              ${taka(ar.data ? ar.data.amount : 0)}
+            </span>
+          </div>
+          <div class="chat-tx-grid">
+            <div>📤 From: <strong>${esc(fromName)}</strong></div>
+            <div>📥 To: <strong>${esc(toName)}</strong></div>
+            <div>📅 Date: <strong>${esc(ar.data ? ar.data.date : todayStr())}</strong></div>
+            <div>📝 Note: <strong>${esc((ar.data && ar.data.note) ? ar.data.note : "-")}</strong></div>
+            ${(ar.data && ar.data.fee) ? `<div>💸 Transfer Fee: <strong>${taka(ar.data.fee)}</strong></div>` : ""}
+          </div>
+          ${!isUndone ? `
+            <div class="chat-tx-btn-row">
+              <button class="chat-mini-btn" data-action="edit-txn" data-id="${ar.txnId}">${ICON.edit} Edit</button>
+              <button class="chat-mini-btn danger" data-action="ai-undo-txn" data-id="${ar.txnId}">${ICON.undo} Undo</button>
+              <button class="chat-mini-btn" data-action="set-tab" data-tab="transactions">📒 View in Ledger</button>
+            </div>
+          ` : `
+            <div style="font-size:11.5px;color:var(--muted);font-style:italic;">This transfer was reversed and deleted.</div>
+          `}
+        </div>
+      `;
+    } else if(ar.type === "account_needed"){
+      txHtml = `
+        <div class="chat-tx-box" style="border-color:var(--gold);">
+          <div style="font-size:12.5px;color:var(--ink);">You don't have an account set up yet. Create a <strong>Cash</strong> account now to save this:</div>
+          <div class="chat-tx-btn-row" style="margin-top:6px;">
+            <button class="btn-fill" style="padding:6px 12px;font-size:12.5px;" data-action="ai-create-cash-and-save">${ICON.plus} Create "Cash" &amp; Review</button>
+          </div>
+        </div>
+      `;
+    }
+  }
+
+  const formattedText = esc(m.text || "")
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+    .replace(/\n/g, '<br/>');
+
+  return `
+    <div class="chat-row ${isUser?'user':'ai'}">
+      <div class="chat-bubble">
+        <div>${formattedText}</div>
+        ${txHtml}
+        <div class="chat-time">${timeStr}</div>
+      </div>
+    </div>
+  `;
+}
+
+// Editable "review before saving" card. The delegated input listener mirrors every
+// field back onto the message's `review` object, so edits survive chat re-renders.
+function renderChatReviewCard(m){
+  const r = m.review;
+  const isTransfer = r.kind === "transfer";
+  const cats = r.kind === "income" ? state.incomeCats : state.expenseCats;
+  const category = cats.includes(r.category) ? r.category : (cats[0] || "");
+  const accountOpts = sel => state.banks.map(b =>
+    `<option value="${esc(b.id)}" ${b.id===sel?"selected":""}>${esc(b.name)}</option>`).join("");
+  const field = f => `data-review-field="${f}"`;
+  const amtColor = r.kind === "income" ? "var(--green-light)" : isTransfer ? "var(--purple)" : "var(--red)";
+
+  return `
+    <div class="chat-review" data-review-msg="${esc(m.id)}">
+      <div class="chat-review-head">
+        <span class="chat-review-badge">${ICON.alert} Review before saving</span>
+        <span class="chat-tx-amt" style="color:${amtColor};">${isTransfer ? "" : (r.kind === "income" ? "+" : "-")}${taka(parseFloat(r.amount) || 0)}</span>
+      </div>
+      <div class="chat-review-grid">
+        ${isTransfer ? `
+          <label>From<select ${field("fromBankId")}>${accountOpts(r.fromBankId)}</select></label>
+          <label>To<select ${field("toBankId")}>${accountOpts(r.toBankId)}</select></label>
+        ` : `
+          <label>Type<select ${field("kind")}>
+            <option value="expense" ${r.kind==="expense"?"selected":""}>Expense</option>
+            <option value="income" ${r.kind==="income"?"selected":""}>Income</option>
+          </select></label>
+          <label>Account<select ${field("bankId")}>${accountOpts(r.bankId)}</select></label>
+          <label>Category<select ${field("category")}>${aiCategoryOptions(r.kind, category)}</select></label>
+        `}
+        <label>Amount (৳)<input type="number" min="0" step="any" ${field("amount")} value="${esc(r.amount)}" placeholder="0" /></label>
+        ${isTransfer ? `<label>Bank Fee (৳)<input type="number" min="0" step="any" ${field("fee")} value="${esc(r.fee)}" placeholder="0" /></label>` : ""}
+        <label>Date<input type="date" ${field("date")} value="${esc(r.date)}" /></label>
+        <label class="chat-review-wide">Note<input type="text" ${field("note")} value="${esc(r.note)}" /></label>
+      </div>
+      ${m.reviewError ? `<div class="chat-review-err">${esc(m.reviewError)}</div>` : ""}
+      <div class="chat-tx-btn-row">
+        <button class="chat-mini-btn" style="border-color:var(--green);color:var(--green);font-weight:600;" data-action="ai-confirm-review" data-id="${esc(m.id)}">${ICON.check} Save Entry</button>
+        <button class="chat-mini-btn danger" data-action="ai-cancel-review" data-id="${esc(m.id)}">${ICON.x} Cancel</button>
+      </div>
+    </div>
+  `;
+}
+
 /* ---------------- icons (tiny inline SVGs) ---------------- */
 const ICON = {
   plus:'<svg class="svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
@@ -349,6 +1598,9 @@ const ICON = {
   alert:'<svg class="svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
   tag:'<svg class="svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41 13.42 20.58a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82Z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>',
   search:'<svg class="svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
+  chat:'<svg class="svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
+  send:'<svg class="svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>',
+  undo:'<svg class="svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>',
 };
 
 /* ---------------- state ---------------- */
@@ -358,7 +1610,11 @@ state.modal = null;
 state.selectedBudgetMonth = monthKey(todayStr());
 state.budgetSearch = "";
 state.accountStatement = { from: monthKey(todayStr())+"-01", to: todayStr(), bankId: "" };
+state.aiAssistant = defaultAIAssistantState();
+state.aiChatMessages = loadAIChatMessages();
+state.aiChatContext = null;
 state.theme = loadTheme();
+state.reportType = "summary";
 applyTheme(state.theme);
 
 // Older budgets had no month — treat them as the current month so nothing is lost.
@@ -681,6 +1937,7 @@ function addTransaction(data, skipCommit){
   state.transactions.push(txn);
   adjustBalance(data.bankId, data.type==="income" ? data.amount : -data.amount);
   if(!skipCommit) commit();
+  return txn;
 }
 function updateTransaction(id, data){
   const idx = state.transactions.findIndex(x=>x.id===id);
@@ -718,6 +1975,7 @@ function addTransfer(data, skipCommit){
     adjustBalance(data.fromBankId, -data.fee);
   }
   if(!skipCommit) commit();
+  return txn;
 }
 function updateTransfer(id, data){
   const t = state.transactions.find(x=>x.id===id && x.type==="transfer");
@@ -931,6 +2189,64 @@ function rangeData(from, to){
   const savingsRate = income>0 ? ((income-expense)/income)*100 : 0;
   return { txns, income, expense, net: income-expense, byCat, incomeByCat, budgetRows, cardPurchases, cardPayments, savingsRate };
 }
+function getMonthsInRange(from, to){
+  const months = [];
+  let [currY, currM] = from.split("-").map(Number);
+  const [endY, endM] = to.split("-").map(Number);
+  while(currY < endY || (currY === endY && currM <= endM)){
+    months.push(`${currY}-${String(currM).padStart(2,'0')}`);
+    currM++;
+    if(currM > 12){ currM = 1; currY++; }
+  }
+  return months;
+}
+
+function reportComparisonHTML(fromMonth, toMonth){
+  const months = getMonthsInRange(fromMonth, toMonth);
+  const data = months.map(m => {
+    const fromDate = m + "-01";
+    const toDate = lastDayOfMonth(m);
+    const d = rangeData(fromDate, toDate);
+    return { month: m, label: monthLabel(m), income: d.income, expense: d.expense, savings: d.income - d.expense };
+  });
+
+  const totalSavings = data.reduce((s, d) => s + d.savings, 0);
+  const insights = data.map(d => {
+    const diff = Math.abs(d.savings);
+    if(d.savings >= 0){
+      return `<div style="margin-bottom:8px;font-size:13px;">✅ In <strong>${d.label}</strong>, your income was higher than expenses by <strong>${taka(diff)}</strong> (Saved).</div>`;
+    } else {
+      return `<div style="margin-bottom:8px;font-size:13px;">⚠️ In <strong>${d.label}</strong>, your expenses increased by <strong>${taka(diff)}</strong> compared to income.</div>`;
+    }
+  }).join("");
+
+  // Prepare Chart.js rendering (will be handled by setupModalExtras)
+  const chartId = "comparisonChart";
+  
+  return `<div style="border:1px solid var(--border);border-radius:10px;padding:14px;background:var(--card);width:100%;max-width:100%;overflow:hidden;">
+    <div style="font-weight:600;margin-bottom:12px;font-size:16px;">Monthly Comparison: ${monthLabel(fromMonth)} – ${monthLabel(toMonth)}</div>
+    
+    <div style="margin-bottom:20px;height:240px;position:relative;">
+      <canvas id="${chartId}"></canvas>
+    </div>
+
+    <div style="font-size:12px;font-weight:700;color:var(--green);text-transform:uppercase;letter-spacing:.5px;margin:12px 0 6px;">Monthly Insights</div>
+    <div style="margin-bottom:16px;">${insights}</div>
+    
+    <div style="border-top:1.5px solid var(--border2);padding-top:12px;margin-top:12px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <span style="font-weight:700;font-size:15px;">Total Period Savings</span>
+        <span class="amt" style="font-weight:700;font-size:18px;color:${totalSavings >= 0 ? 'var(--green-light)' : 'var(--red)'}">${taka(totalSavings)}</span>
+      </div>
+      <p style="font-size:12px;color:var(--muted);margin-top:4px;">${totalSavings >= 0 ? "Great job! You are in surplus for this period." : "Your total savings are in a negative figure for this period. Try to review your expenses."}</p>
+    </div>
+    
+    <script>
+      // We'll call a function to init the chart since scripts in innerHTML don't execute
+    <\/script>
+  </div>`;
+}
+
 function reportPreviewHTML(from, to){
   const d = rangeData(from, to);
   const line = (label, val, opts) => {
@@ -960,6 +2276,88 @@ function rptPageOpen(title){
     <div class="rpt-page-head"><span class="rpt-brand">🏛️ My Ledger</span><span class="rpt-page-title">${esc(title)}</span></div>`;
 }
 function rptPageClose(){ return `</section>`; }
+
+function rptComparisonPage(fromMonth, toMonth){
+  const months = getMonthsInRange(fromMonth, toMonth);
+  const data = months.map(m => {
+    const fromDate = m + "-01";
+    const toDate = lastDayOfMonth(m);
+    const d = rangeData(fromDate, toDate);
+    return { label: monthLabel(m), income: d.income, expense: d.expense, savings: d.income - d.expense };
+  });
+
+  const totalSavings = data.reduce((s, d) => s + d.savings, 0);
+
+  return rptPageOpen("Monthly Comparison") + `
+    <h1 class="rpt-h1">Financial Comparison</h1>
+    <p class="rpt-period">Period: ${monthLabel(fromMonth)} – ${monthLabel(toMonth)}</p>
+    
+    <div style="margin:20px 0;height:280px;border:1px solid #E4DCC6;border-radius:8px;padding:10px;">
+      <canvas id="printComparisonChart"></canvas>
+    </div>
+
+    <h3 class="rpt-h3">Monthly Summary</h3>
+    <table class="rpt-table">
+      <thead>
+        <tr><th>Month</th><th class="num">Income</th><th class="num">Expense</th><th class="num">Savings</th></tr>
+      </thead>
+      <tbody>
+        ${data.map(d => `
+          <tr>
+            <td>${d.label}</td>
+            <td class="num">${taka(d.income)}</td>
+            <td class="num">${taka(d.expense)}</td>
+            <td class="num" style="color:${d.savings>=0?'#2D6A4F':'#8B2E2E'}">${taka(d.savings)}</td>
+          </tr>
+        `).join("")}
+        <tr class="rpt-grand">
+          <td colspan="3">Total Period Savings</td>
+          <td class="num">${taka(totalSavings)}</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3 class="rpt-h3">Analysis</h3>
+    <div style="font-size:13px;line-height:1.6;">
+      ${data.map(d => {
+        const diff = Math.abs(d.savings);
+        return `<div style="margin-bottom:6px;">• In <strong>${d.label}</strong>, ${d.savings>=0 ? `income was higher than expenses by <strong>${taka(diff)}</strong>.` : `expenses increased by <strong>${taka(diff)}</strong> compared to income.`}</div>`;
+      }).join("")}
+    </div>
+    <p style="font-size:12.5px;margin-top:12px;font-style:italic;color:#5c5346;">
+      ${totalSavings >= 0 ? "Overall, you have a positive savings balance for this period." : "Overall, your total expenses exceeded your income during this period."}
+    </p>
+    
+    <script>
+      // This script will be executed when building the full doc
+      (function(){
+        const ctx = document.getElementById("printComparisonChart");
+        if(!ctx) return;
+        const labels = ${JSON.stringify(data.map(d => d.label))};
+        const incomeData = ${JSON.stringify(data.map(d => d.income))};
+        const expenseData = ${JSON.stringify(data.map(d => d.expense))};
+        
+        new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: labels,
+            datasets: [
+              { label: 'Income', data: incomeData, backgroundColor: '#2D6A4F' },
+              { label: 'Expense', data: expenseData, backgroundColor: '#8B2E2E' }
+            ]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            plugins: { legend: { position: 'top' } },
+            scales: { y: { beginAtZero: true } }
+          }
+        });
+      })();
+    <\/script>
+  ` + rptPageClose();
+}
 
 function rptDashboardPage(from, to){
   const d = rangeData(from, to);
@@ -1236,7 +2634,7 @@ function rptAccountStatementsPage(from, to){
 function generatePrintReportHTML(from, to){
   const pages = [
     rptCoverPage(from, to),
-    rptDashboardPage(from, to),
+    state.reportType === "comparison" ? rptComparisonPage(monthKey(from), monthKey(to)) : rptDashboardPage(from, to),
     rptIncomeStatementPage(from, to),
     rptBalanceSheetPage(),
     rptCashFlowPage(from, to),
@@ -1312,6 +2710,7 @@ function makeReportLink(from, to){
 // view, the downloadable file, and the openable link.
 function buildReportDocHTML(from, to){
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Personal Finance Report of Hasan Jabed</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"><\/script>
     <style>
       :root{--serif:'Iowan Old Style','Palatino Linotype',Palatino,Georgia,serif;--mono:'SF Mono','Roboto Mono',Consolas,monospace;}
       body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#EDE7D6;color:#26201A;margin:0;padding:24px 12px;line-height:1.45;}
@@ -1494,6 +2893,7 @@ const TABS = [
   {id:"dashboard", label:"Dashboard", emoji:"📊"},
   {id:"accounts", label:"Accounts", emoji:"🏦"},
   {id:"transactions", label:"Transactions", emoji:"📒"},
+  {id:"chat", label:"AI Chat", emoji:"💬"},
   {id:"budgets", label:"Budgets", emoji:"💰"},
   {id:"goals", label:"Goals", emoji:"🎯"},
   {id:"recurring", label:"Recurring", emoji:"🔁"},
@@ -1540,6 +2940,11 @@ function render(){
 
     <main>${renderTab()}</main>
     ${state.modal ? renderModal() : ""}
+    ${state.tab !== "chat" ? `
+      <button class="chat-fab" data-action="set-tab" data-tab="chat" title="Open AI Chat Assistant">
+        ${ICON.chat} <span>AI Chat</span>
+      </button>
+    ` : ""}
     <div class="offline-badge">Works fully offline · saved on this device</div>
   `;
   attachHandlers();
@@ -1550,6 +2955,7 @@ function renderTab(){
     case "dashboard": return renderDashboard();
     case "accounts": return renderAccounts();
     case "transactions": return renderTransactions();
+    case "chat": return renderAIChatTab();
     case "budgets": return renderBudgets();
     case "goals": return renderGoals();
     case "recurring": return renderRecurring();
@@ -1790,6 +3196,7 @@ function renderTransactions(){
     <div class="row-between">
       <h2 class="section-title">Transaction Ledger</h2>
       <div style="display:flex;gap:8px;">
+        <button class="btn-outline" data-action="set-tab" data-tab="chat">${ICON.chat} AI Chat</button>
         <button class="btn-outline" ${state.banks.length<2?"disabled":""} data-action="open-modal" data-modal="transfer">${ICON.transfer} Transfer</button>
         <button class="btn-fill" ${state.banks.length===0?"disabled":""} data-action="open-modal" data-modal="transaction">${ICON.plus} Transaction</button>
       </div>
@@ -2023,14 +3430,19 @@ function renderModal(){
   else if(m.type==="loan") { title="New Loan / Due"; body = loanForm(); }
   else if(m.type==="backup") { title="Backup & Restore"; body = backupForm(); }
   else if(m.type==="textexport") { title=m.filename; body = textExportForm(m.text, m.filename); }
-  else if(m.type==="report") { title="Report"; body = reportForm(m.from || (monthKey(todayStr())+"-01"), m.to || todayStr()); }
+  else if(m.type==="report") {
+    title = state.reportType === "comparison" ? "Monthly Comparison" : "Period Report";
+    body = reportForm(m.from || (monthKey(todayStr())+"-01"), m.to || todayStr());
+  }
   else if(m.type==="cloud") { title="Cloud Sync"; body = cloudForm(); }
   else if(m.type==="theme") { title="Choose a Theme"; body = themeForm(); }
   else if(m.type==="security") { title="Local Password Lock"; body = securityForm(); }
   else if(m.type==="password-prompt") { title="Security Verification"; body = passwordPromptForm(m.reason); }
   else if(m.type==="settings") { title="⚙️ Options & Settings"; body = settingsForm(); }
+  else if(m.type==="ai") { title="💬 AI Transaction Assistant"; body = renderAIChatModal(); }
+  else if(m.type==="gemini-setup") { title="⚡ Connect Gemini AI (Free)"; body = geminiSetupForm(); }
 
-  const wide = m.type==="report" ? "max-width:720px;" : (m.type==="textexport" || m.type==="cloud" || m.type==="security" || m.type==="password-prompt" || m.type==="settings") ? "max-width:560px;" : "";
+  const wide = m.type==="report" ? "max-width:720px;" : (m.type==="ai") ? "max-width:760px;padding:16px;" : (m.type==="textexport" || m.type==="cloud" || m.type==="security" || m.type==="password-prompt" || m.type==="settings" || m.type==="gemini-setup") ? "max-width:560px;" : "";
   return `<div class="modal-overlay" data-action="close-modal-overlay">
     <div class="modal-box" style="${wide}">
       <div class="modal-head"><h3 class="modal-title" style="word-break:break-all;">${esc(title)}</h3><button class="modal-close" data-action="close-modal">${ICON.x}</button></div>
@@ -2038,6 +3450,57 @@ function renderModal(){
     </div>
   </div>`;
 }
+function geminiSetupForm(){
+  const hasKey = !!getGeminiKey();
+  const maskedKey = hasKey ? "AIza••••••••••••••••••••••••••••••••••••" : "";
+  return `<div style="display:flex;flex-direction:column;gap:16px;">
+
+    <div class="gemini-setup-box">
+      <div style="display:flex;align-items:center;gap:12px;">
+        <div style="font-size:28px;">✨</div>
+        <div>
+          <div style="font-weight:700;font-size:15px;color:var(--ink);">Google Gemini AI</div>
+          <div style="font-size:12.5px;color:var(--muted);">Free tier · No credit card required · Key stays on this device</div>
+        </div>
+      </div>
+
+      <div class="gemini-key-steps">
+        <strong style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">How to get a FREE API key (1 minute):</strong>
+        <ol>
+          <li>Go to <a href="https://aistudio.google.com/app/apikey" target="_blank">aistudio.google.com/app/apikey</a></li>
+          <li>Sign in with any Google account</li>
+          <li>Click <strong>"Create API key"</strong></li>
+          <li>Copy the key and paste it below</li>
+        </ol>
+        <div style="font-size:11.5px;color:var(--muted);margin-top:4px;">🔒 The key is stored only on <strong>this device</strong> — never sent to any server except Google.</div>
+      </div>
+    </div>
+
+    <label class="field">Your Gemini API Key
+      <input id="gemini-key-input" type="password"
+        placeholder="AIzaSy..."
+        value="${hasKey ? maskedKey : ""}"
+        style="font-family:var(--mono);font-size:13px;letter-spacing:1px;"
+        autocomplete="off" />
+    </label>
+
+    ${hasKey ? `
+    <div style="padding:10px 14px;background:color-mix(in srgb,var(--green-light) 12%,transparent);border:1px solid color-mix(in srgb,var(--green-light) 25%,transparent);border-radius:9px;font-size:13px;color:var(--ink);">
+      ✅ <strong>Gemini AI is connected!</strong> Your transactions will be analyzed by Gemini.
+    </div>` : ""}
+
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button class="btn-submit" style="flex:1;" data-action="save-gemini-key">
+        ${hasKey ? "⚡ Update API Key" : "⚡ Connect Gemini AI"}
+      </button>
+      ${hasKey ? `<button class="btn-outline" style="flex:1;border-color:var(--red);color:var(--red);" data-action="remove-gemini-key">Remove Key</button>` : ""}
+    </div>
+
+    <button class="btn-outline" style="justify-content:center;" data-action="test-gemini-key">🧪 Test Connection</button>
+    <div id="gemini-test-result" style="font-size:13px;display:none;padding:10px;border-radius:8px;border:1px solid var(--border);"></div>
+  </div>`;
+}
+
 function settingsForm(){
   return `<div style="display:flex;flex-direction:column;gap:12px;">
     <!-- Cloud Sync -->
@@ -2084,6 +3547,15 @@ function settingsForm(){
         <div style="font-size:12px;color:var(--muted);margin-top:2px;">Export/Import JSON backup or CSV files</div>
       </div>
       <button class="btn-outline" style="font-size:13px;padding:7px 14px;" data-action="open-backup">Backups</button>
+    </div>
+
+    <!-- Gemini AI -->
+    <div class="card" style="padding:14px;display:flex;justify-content:space-between;align-items:center;">
+      <div>
+        <div style="font-weight:600;font-size:14.5px;">✨ Gemini AI Chat</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px;">${getGeminiKey() ? "Free Gemini API connected — chat to log transactions" : "Add a free Google AI Studio key for smarter chat entries"}</div>
+      </div>
+      <button class="btn-outline" style="font-size:13px;padding:7px 14px;" data-action="open-gemini-setup">${getGeminiKey() ? "Manage" : "Connect"}</button>
     </div>
   </div>`;
 }
@@ -2173,14 +3645,19 @@ function themeForm(){
 }
 function reportForm(from, to){
   const mk = monthKey(from);
+  const type = state.reportType || "summary";
   return `<div style="display:flex;flex-direction:column;gap:14px;">
-    <label class="field">Quick pick: month<input type="month" id="report-quick-month" value="${mk}" /></label>
+    <div class="tabbar-inner" style="margin-bottom:0;">
+      <button class="tab-btn ${type==='summary'?'active':''}" style="flex:1;justify-content:center;" data-action="set-report-type" data-type="summary">Period Summary</button>
+      <button class="tab-btn ${type==='comparison'?'active':''}" style="flex:1;justify-content:center;" data-action="set-report-type" data-type="comparison">Monthly Comparison</button>
+    </div>
+    <label class="field">${type==='comparison'?'Range Start Month':'Quick pick: month'}<input type="${type==='comparison'?'month':'month'}" id="report-quick-month" value="${mk}" /></label>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;">
-      <label class="field" style="flex:1;">From<input type="date" id="report-from" value="${from}" /></label>
-      <label class="field" style="flex:1;">To<input type="date" id="report-to" value="${to}" /></label>
+      <label class="field" style="flex:1;">${type==='comparison'?'From Month':'From'}<input type="${type==='comparison'?'month':'date'}" id="report-from" value="${type==='comparison'?monthKey(from):from}" /></label>
+      <label class="field" style="flex:1;">${type==='comparison'?'To Month':'To'}<input type="${type==='comparison'?'month':'date'}" id="report-to" value="${type==='comparison'?monthKey(to):to}" /></label>
     </div>
     <button class="btn-outline" style="justify-content:center;" data-action="regenerate-report">Refresh Preview</button>
-    <div id="report-preview">${reportPreviewHTML(from, to)}</div>
+    <div id="report-preview">${type === 'comparison' ? reportComparisonHTML(monthKey(from), monthKey(to)) : reportPreviewHTML(from, to)}</div>
     <div style="display:flex;flex-direction:column;gap:8px;">
       <button class="btn-submit" data-action="print-report">Print / Save as PDF</button>
       <button class="btn-outline" style="justify-content:center;" data-action="download-report-file">Download Report File (best on iPhone)</button>
@@ -2196,6 +3673,68 @@ function textExportForm(text, filename){
     <p style="font-size:13px;color:var(--muted);margin:0;">The text below is already selected. Tap/hold on it and choose <strong>Copy</strong> from the menu that pops up (this works even when app buttons don't). Then save it as a file named <strong>${esc(filename)}</strong> — e.g. paste into a new file in the Documents app or Notes.</p>
     <textarea id="export-text-area" readonly onclick="this.focus();this.select();" style="width:100%;height:220px;padding:10px;border-radius:8px;border:1px solid var(--border2);background:var(--card);font-family:var(--mono);font-size:12px;">${esc(text)}</textarea>
     <button class="btn-outline" style="justify-content:center;" data-action="copy-export-text">Also Try: Copy to Clipboard Button</button>
+  </div>`;
+}
+function aiAssistantForm(){
+  const ai = state.aiAssistant || defaultAIAssistantState();
+  const parsed = ai.parsed || defaultAIDraft();
+  const previewTone = aiConfidenceColor(ai.confidence || "medium");
+  return `<div style="display:flex;flex-direction:column;gap:14px;">
+    <p style="font-size:13px;color:var(--muted);margin:0;">Describe a transaction in your own words. Example: <strong>cash 1000 taka diye grocery kinlam aj</strong> or <strong>bkash e salary 25000 pelam</strong>.</p>
+    <label class="field">What happened?
+      <textarea id="ai-text" placeholder="Type in Bangla, English, or mixed words..." style="width:100%;height:110px;padding:10px 12px;border-radius:10px;border:1px solid var(--border2);background:var(--card);font-size:14px;color:var(--ink);resize:vertical;">${esc(ai.text || "")}</textarea>
+    </label>
+    <button class="btn-fill" style="justify-content:center;" data-action="analyze-ai-entry">Analyze Text</button>
+    <div class="ai-preview">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+        <div style="font-weight:700;">Preview</div>
+        <div class="ai-chip" style="border-color:${previewTone};color:${previewTone};">${aiConfidenceLabel(ai.confidence || "medium")}</div>
+      </div>
+      <div class="ai-preview-grid">
+        <label class="field">Type
+          <select id="ai-kind">
+            <option value="expense" ${parsed.kind==="expense"?'selected':''}>Expense</option>
+            <option value="income" ${parsed.kind==="income"?'selected':''}>Income</option>
+            <option value="transfer" ${parsed.kind==="transfer"?'selected':''}>Transfer</option>
+          </select>
+        </label>
+        <label class="field">Amount (৳)<input type="number" id="ai-amount" value="${parsed.amount!==""?esc(parsed.amount):""}" placeholder="0" /></label>
+        <label class="field">Date<input type="date" id="ai-date" value="${esc(parsed.date || todayStr())}" /></label>
+      </div>
+      <div id="ai-single-fields" class="ai-preview-grid" style="margin-top:10px;display:${parsed.kind==="transfer"?"none":"grid"};">
+        <label class="field">Account
+          <select id="ai-bank">
+            <option value="">Select account</option>
+            ${state.banks.map(b=>`<option value="${b.id}" ${parsed.bankId===b.id?'selected':''}>${esc(b.name)}</option>`).join("")}
+          </select>
+        </label>
+        <label class="field">Category
+          <select id="ai-category">${aiCategoryOptions(parsed.kind, parsed.category)}</select>
+        </label>
+      </div>
+      <div id="ai-transfer-fields" class="ai-preview-grid" style="margin-top:10px;display:${parsed.kind==="transfer"?"grid":"none"};">
+        <label class="field">From account
+          <select id="ai-from-bank">
+            <option value="">Select source</option>
+            ${state.banks.map(b=>`<option value="${b.id}" ${parsed.fromBankId===b.id?'selected':''}>${esc(b.name)}</option>`).join("")}
+          </select>
+        </label>
+        <label class="field">To account
+          <select id="ai-to-bank">
+            <option value="">Select destination</option>
+            ${state.banks.map(b=>`<option value="${b.id}" ${parsed.toBankId===b.id?'selected':''}>${esc(b.name)}</option>`).join("")}
+          </select>
+        </label>
+      </div>
+      <label class="field" style="margin-top:10px;">Note
+        <input id="ai-note" value="${esc(parsed.note || ai.text || "")}" placeholder="Optional note" />
+      </label>
+      ${(ai.errors&&ai.errors.length) || (ai.hints&&ai.hints.length) ? `<div class="ai-chip-row">
+        ${(ai.errors||[]).map(msg=>`<span class="ai-chip" style="border-color:var(--red);color:var(--red);">${esc(msg)}</span>`).join("")}
+        ${(ai.hints||[]).map(msg=>`<span class="ai-chip">${esc(msg)}</span>`).join("")}
+      </div>` : `<div class="ai-chip-row"><span class="ai-chip">Review the preview, then save.</span></div>`}
+    </div>
+    <button class="btn-submit" data-action="save-ai-entry">${ICON.check} Save Parsed Entry</button>
   </div>`;
 }
 
@@ -2365,16 +3904,265 @@ function backupForm(){
 
 /* ---------------- event handling ---------------- */
 function attachHandlers(){
+  // Mirrors edits typed into an AI-chat review card back onto its message, so a
+  // re-render (or another chat turn) never loses what the user changed.
+  const onReviewFieldEdited = (e) => {
+    const field = e.target.closest && e.target.closest("[data-review-field]");
+    if(!field) return;
+    const holder = field.closest("[data-review-msg]");
+    if(!holder) return;
+    const msg = state.aiChatMessages.find(m => m.id === holder.dataset.reviewMsg);
+    if(!msg || !msg.review) return;
+    msg.review[field.dataset.reviewField] = field.value;
+    // Switching type changes which categories are offered, so rebuild the card.
+    if(field.dataset.reviewField === "kind"){
+      msg.reviewError = null;
+      render();
+    }
+  };
+  document.body.oninput = onReviewFieldEdited;
+  document.body.onchange = onReviewFieldEdited;
+
   document.body.onclick = async (e) => {
     const el = e.target.closest("[data-action]");
     if(!el) return;
     const action = el.dataset.action;
     const id = el.dataset.id;
 
-    if(action==="set-tab"){ state.tab = el.dataset.tab; render(); }
+    if(action==="set-tab"){ state.tab = el.dataset.tab; if(state.modal) state.modal = null; render(); }
+    else if(action==="set-report-type"){
+      state.reportType = el.dataset.type;
+      const m = state.modal;
+      if(m && m.type==="report"){
+        const from = document.getElementById("report-from").value;
+        const to = document.getElementById("report-to").value;
+        m.from = from; m.to = to;
+      }
+      render();
+      setupModalExtras();
+    }
     else if(action==="open-modal"){ state.modal = { type: el.dataset.modal }; render(); setupModalExtras(); }
     else if(action==="open-backup"){ state.modal = { type: "backup" }; render(); }
     else if(action==="set-theme"){ setTheme(el.dataset.themeId); render(); }
+    else if(action==="analyze-ai-entry"){
+      const text = document.getElementById("ai-text").value.trim();
+      aiApplyParsedResult(text);
+      render();
+    }
+    else if(action==="save-ai-entry"){
+      const text = document.getElementById("ai-text").value.trim();
+      const draft = readAIAssistantDraftFromForm();
+      draft.note = draft.note || text;
+      const errors = validateAIDraft(draft);
+      state.aiAssistant.text = text;
+      state.aiAssistant.parsed = draft;
+      state.aiAssistant.errors = errors;
+      state.aiAssistant.hints = [];
+      if(errors.length){ render(); return; }
+      if(draft.kind==="transfer"){
+        addTransfer({ fromBankId:draft.fromBankId, toBankId:draft.toBankId, amount:draft.amount, fee:0, note:draft.note, date:draft.date });
+      } else {
+        addTransaction({ type:draft.kind, bankId:draft.bankId, amount:draft.amount, category:draft.category, note:draft.note, date:draft.date });
+      }
+      state.aiAssistant.lastSaved = { ...draft };
+      state.aiAssistant.text = "";
+      state.aiAssistant.parsed = null;
+      state.aiAssistant.errors = [];
+      state.aiAssistant.hints = [];
+      state.modal = null;
+      state.tab = "transactions";
+      render();
+    }
+    else if(action==="send-ai-chat"){
+      const inp = document.getElementById("chat-input-field");
+      if(inp && inp.value.trim()){
+        const val = inp.value.trim();
+        inp.value = "";
+        executeAIChatInput(val);
+      }
+    }
+    else if(action==="open-gemini-setup"){
+      state.modal = { type: "gemini-setup" };
+      render();
+    }
+    else if(action==="save-gemini-key"){
+      const inp = document.getElementById("gemini-key-input");
+      const val = ((inp && inp.value) || "").trim();
+      if(!val || looksLikeMaskedGeminiKey(val)){
+        alert("Paste your real Gemini API key (from aistudio.google.com/app/apikey).");
+        return;
+      }
+      setGeminiKey(val);
+      localStorage.removeItem(GEMINI_MODEL_STORAGE);
+      const onlyWelcome = !state.aiChatMessages.length || (state.aiChatMessages.length === 1 && state.aiChatMessages[0].id === "welcome-1");
+      if(onlyWelcome){
+        state.aiChatMessages = [getWelcomeMessage()];
+        saveAIChatMessages(state.aiChatMessages);
+      }
+      state.modal = null;
+      state.tab = "chat";
+      render();
+      scrollChatToBottom();
+    }
+    else if(action==="remove-gemini-key"){
+      if(!confirm("Remove the Gemini API key from this device?")) return;
+      clearGeminiKey();
+      const onlyWelcome = !state.aiChatMessages.length || (state.aiChatMessages.length === 1 && state.aiChatMessages[0].id === "welcome-1");
+      if(onlyWelcome){
+        state.aiChatMessages = [getWelcomeMessage()];
+        saveAIChatMessages(state.aiChatMessages);
+      }
+      state.modal = null;
+      state.tab = "chat";
+      render();
+    }
+    else if(action==="test-gemini-key"){
+      const resultEl = document.getElementById("gemini-test-result");
+      const inp = document.getElementById("gemini-key-input");
+      const typed = ((inp && inp.value) || "").trim();
+      const keyToTest = (typed && !looksLikeMaskedGeminiKey(typed)) ? typed : getGeminiKey();
+      if(!keyToTest){
+        if(resultEl){
+          resultEl.style.display = "block";
+          resultEl.style.borderColor = "var(--red)";
+          resultEl.textContent = "Paste an API key first.";
+        }
+        return;
+      }
+      if(resultEl){
+        resultEl.style.display = "block";
+        resultEl.style.borderColor = "var(--border)";
+        resultEl.textContent = "Testing Gemini connection…";
+      }
+      callGeminiAI("ok", { ping:true, apiKey:keyToTest }).then(result => {
+        if(!resultEl) return;
+        resultEl.style.display = "block";
+        if(result && result.ok){
+          resultEl.style.borderColor = "var(--green-light)";
+          resultEl.textContent = "✅ Connected" + (result.model ? " (" + result.model + ")" : "") + ". Click Connect Gemini AI to save this key.";
+        } else {
+          resultEl.style.borderColor = "var(--red)";
+          resultEl.textContent = "❌ " + ((result && result.error) || "Connection failed.");
+        }
+      });
+    }
+    else if(action==="clear-ai-chat"){
+      if(confirm("Clear chat history? (Transactions in ledger will NOT be deleted)")){
+        state.aiChatMessages = [getWelcomeMessage()];
+        saveAIChatMessages(state.aiChatMessages);
+        render();
+      }
+    }
+    else if(action==="ai-chip-prompt"){
+      const txt = el.dataset.text;
+      if(txt) executeAIChatInput(txt);
+    }
+    else if(action==="ai-undo-txn"){
+      const txnId = el.dataset.id;
+      if(txnId){
+        deleteTransaction(txnId);
+        state.aiChatMessages.forEach(m => {
+          if(m.actionResult && m.actionResult.txnId === txnId){
+            m.actionResult.undone = true;
+          }
+        });
+        saveAIChatMessages(state.aiChatMessages);
+        render();
+        scrollChatToBottom();
+      }
+    }
+    else if(action==="ai-change-bank"){
+      const txnId = el.dataset.txnid;
+      const newBankId = el.dataset.bankid;
+      const t = state.transactions.find(x => x.id === txnId);
+      if(t && newBankId && t.bankId !== newBankId){
+        adjustBalance(t.bankId, t.type === "income" ? -t.amount : t.amount);
+        t.bankId = newBankId;
+        adjustBalance(t.bankId, t.type === "income" ? t.amount : -t.amount);
+        commit();
+        state.aiChatMessages.forEach(m => {
+          if(m.actionResult && m.actionResult.txnId === txnId){
+            if(m.actionResult.data) m.actionResult.data.bankId = newBankId;
+          }
+        });
+        saveAIChatMessages(state.aiChatMessages);
+        render();
+        scrollChatToBottom();
+      }
+    }
+    else if(action==="ai-confirm-review"){
+      const msg = state.aiChatMessages.find(m => m.id === id);
+      if(!msg || !msg.review) return;
+      const r = msg.review;
+      const draft = {
+        kind: r.kind === "transfer" ? "transfer" : (r.kind === "income" ? "income" : "expense"),
+        amount: parseFloat(r.amount) || 0,
+        date: r.date || todayStr(),
+        bankId: r.bankId || "",
+        fromBankId: r.fromBankId || "",
+        toBankId: r.toBankId || "",
+        category: r.category || "",
+        note: (r.note || "").trim(),
+        fee: parseFloat(r.fee) || 0
+      };
+      const cats = draft.kind === "income" ? state.incomeCats : state.expenseCats;
+      if(draft.kind !== "transfer" && !cats.includes(draft.category)) draft.category = cats[0] || "";
+      const errors = validateAIDraft(draft);
+      if(errors.length){
+        msg.reviewError = errors.join(" ");
+        render();
+        return;
+      }
+      let created;
+      if(draft.kind === "transfer"){
+        created = addTransfer({ fromBankId:draft.fromBankId, toBankId:draft.toBankId, amount:draft.amount, fee:draft.fee, note:draft.note || "Transfer", date:draft.date });
+      } else {
+        created = addTransaction({ type:draft.kind, bankId:draft.bankId, amount:draft.amount, category:draft.category, note:draft.note || draft.category, date:draft.date });
+      }
+      msg.review = null;
+      msg.reviewError = null;
+      if(draft.kind === "transfer"){
+        msg.text = `✅ **Transfer Saved!**\nMoved **${taka(draft.amount)}** from **${bankName_(draft.fromBankId)}** to **${bankName_(draft.toBankId)}**.${draft.fee ? ` Fee **${taka(draft.fee)}** charged.` : ""}`;
+        msg.actionResult = {
+          type:"transfer_created",
+          txnId: created ? created.id : "",
+          data: { fromBankId:draft.fromBankId, toBankId:draft.toBankId, amount:draft.amount, fee:draft.fee, note:draft.note || "Transfer", date:draft.date }
+        };
+      } else {
+        msg.text = `✅ **Saved!**\nAdded ${draft.kind === "income" ? "income" : "expense"} of **${taka(draft.amount)}** under **${draft.category}** from **${bankName_(draft.bankId)}**.`;
+        msg.actionResult = {
+          type:"transaction_created",
+          txnId: created ? created.id : "",
+          data: { type:draft.kind, bankId:draft.bankId, amount:draft.amount, category:draft.category, note:draft.note || draft.category, date:draft.date }
+        };
+      }
+      saveAIChatMessages(state.aiChatMessages);
+      render();
+      scrollChatToBottom();
+    }
+    else if(action==="ai-cancel-review"){
+      const msg = state.aiChatMessages.find(m => m.id === id);
+      if(!msg || !msg.review) return;
+      msg.review = null;
+      msg.reviewError = null;
+      msg.text = "✖ Cancelled — nothing was added to your ledger.";
+      saveAIChatMessages(state.aiChatMessages);
+      render();
+      scrollChatToBottom();
+    }
+    else if(action==="ai-create-cash-and-save"){
+      const draft = state.aiChatContext && state.aiChatContext.pendingSave;
+      state.aiChatContext = null;
+      addBank({ name: "Cash", balance: 0, isCard: false });
+      const newBank = state.banks[state.banks.length - 1];
+      if(draft && newBank){
+        draft.bankId = newBank.id;
+        state.aiChatMessages.push(buildReviewMessage(draft));
+        saveAIChatMessages(state.aiChatMessages);
+      }
+      render();
+      scrollChatToBottom();
+    }
     else if(action==="save-admin-password"){
       const p1 = document.getElementById("admin-pass1").value;
       const p2 = document.getElementById("admin-pass2").value;
@@ -2480,7 +4268,14 @@ function attachHandlers(){
     else if(action==="regenerate-report"){
       const from = document.getElementById("report-from").value;
       const to = document.getElementById("report-to").value;
-      if(from && to) document.getElementById("report-preview").innerHTML = reportPreviewHTML(from, to);
+      if(from && to){
+        if(state.reportType === "comparison"){
+          document.getElementById("report-preview").innerHTML = reportComparisonHTML(from, to);
+          initComparisonChart(from, to);
+        } else {
+          document.getElementById("report-preview").innerHTML = reportPreviewHTML(from, to);
+        }
+      }
     }
     else if(action==="print-report"){
       const from = document.getElementById("report-from").value || (monthKey(todayStr())+"-01");
@@ -2555,6 +4350,9 @@ function attachHandlers(){
 
   // accounts tab: drag-to-reorder
   setupAccountDnD();
+
+  const aiKind = document.getElementById("ai-kind");
+  if(aiKind){ aiKind.onchange = () => updateAIAssistantVisibility(); }
 
   // forms
   bindForm("form-password-prompt", () => {
@@ -2704,6 +4502,24 @@ function attachHandlers(){
   });
 
   setupModalExtras();
+
+  const chatInput = document.getElementById("chat-input-field");
+  if(chatInput){
+    chatInput.onkeydown = (e) => {
+      if(e.key === "Enter" && !e.shiftKey){
+        e.preventDefault();
+        const text = chatInput.value.trim();
+        if(text){
+          chatInput.value = "";
+          executeAIChatInput(text);
+        }
+      }
+    };
+    const msgBox = document.getElementById("chat-messages-container");
+    if(msgBox){
+      msgBox.scrollTop = msgBox.scrollHeight;
+    }
+  }
 }
 
 function renderFilteredOnly(){
@@ -2763,6 +4579,76 @@ function setupAccountDnD(){
   });
 }
 
+function initComparisonChart(fromMonth, toMonth){
+  const ctx = document.getElementById("comparisonChart");
+  if(!ctx) return;
+  const months = getMonthsInRange(fromMonth, toMonth);
+  const data = months.map(m => {
+    const fromDate = m + "-01";
+    const toDate = lastDayOfMonth(m);
+    const d = rangeData(fromDate, toDate);
+    return { label: monthLabel(m), income: d.income, expense: d.expense };
+  });
+
+  const isDark = document.documentElement.getAttribute("data-theme") === "dark" || 
+                 document.documentElement.getAttribute("data-theme") === "midnight";
+  const textColor = isDark ? "#9BA1A7" : "#79705F";
+  const gridColor = isDark ? "rgba(255,255,255,0.08)" : "rgba(27,67,50,0.05)";
+
+  new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: data.map(d => d.label),
+      datasets: [
+        {
+          label: 'Income',
+          data: data.map(d => d.income),
+          backgroundColor: '#2D6A4F',
+          borderRadius: 4,
+        },
+        {
+          label: 'Expense',
+          data: data.map(d => d.expense),
+          backgroundColor: '#8B2E2E',
+          borderRadius: 4,
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          position: 'top',
+          labels: { color: textColor, font: { size: 11, weight: '600' } }
+        },
+        tooltip: {
+          backgroundColor: isDark ? '#1E2429' : '#FFFDF8',
+          titleColor: isDark ? '#E9E7E1' : '#221E1B',
+          bodyColor: isDark ? '#E9E7E1' : '#221E1B',
+          borderColor: isDark ? '#3B444D' : '#D8CFB6',
+          borderWidth: 1,
+        }
+      },
+      scales: {
+        x: {
+          grid: { display: false },
+          ticks: { color: textColor, font: { size: 10 } }
+        },
+        y: {
+          beginAtZero: true,
+          grid: { color: gridColor },
+          ticks: { 
+            color: textColor, 
+            font: { size: 10 },
+            callback: (val) => '৳' + val.toLocaleString()
+          }
+        }
+      }
+    }
+  });
+}
+
 function setupModalExtras(){
   // export/backup textarea: auto-select so the OS's native Copy option appears,
   // since JS clipboard APIs are blocked in some in-app browsers
@@ -2773,12 +4659,27 @@ function setupModalExtras(){
   if(qm){
     qm.onchange = () => {
       const mk = qm.value;
-      const from = mk + "-01";
-      const to = mk === monthKey(todayStr()) ? todayStr() : lastDayOfMonth(mk);
-      document.getElementById("report-from").value = from;
-      document.getElementById("report-to").value = to;
-      document.getElementById("report-preview").innerHTML = reportPreviewHTML(from, to);
+      const type = state.reportType || "summary";
+      if(type === "comparison"){
+        const from = mk;
+        const to = monthKey(todayStr());
+        document.getElementById("report-from").value = from;
+        document.getElementById("report-to").value = to;
+        document.getElementById("report-preview").innerHTML = reportComparisonHTML(from, to);
+        initComparisonChart(from, to);
+      } else {
+        const from = mk + "-01";
+        const to = mk === monthKey(todayStr()) ? todayStr() : lastDayOfMonth(mk);
+        document.getElementById("report-from").value = from;
+        document.getElementById("report-to").value = to;
+        document.getElementById("report-preview").innerHTML = reportPreviewHTML(from, to);
+      }
     };
+  }
+  const fromEl = document.getElementById("report-from");
+  const toEl = document.getElementById("report-to");
+  if(fromEl && toEl && state.reportType === "comparison"){
+    initComparisonChart(fromEl.value, toEl.value);
   }
   // account: toggle credit card fields
   const iscard = document.getElementById("acc-iscard");
@@ -2807,6 +4708,7 @@ function setupModalExtras(){
   if(fileInput){ fileInput.onchange = () => { if(fileInput.files[0]) importDataFromFile(fileInput.files[0]); fileInput.value=""; }; }
   const csvInput = document.getElementById("csvFileInput");
   if(csvInput){ csvInput.onchange = () => { if(csvInput.files[0]) importTransactionsFromCSV(csvInput.files[0]); csvInput.value=""; }; }
+  updateAIAssistantVisibility();
 }
 // Reusable searchable combobox: turns a text input + hidden input + list div
 // into a fast type-to-filter picker. Tap/focus opens the list, typing filters
