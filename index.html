@@ -1611,6 +1611,7 @@ state.selectedBudgetMonth = monthKey(todayStr());
 state.budgetSearch = "";
 state.accountStatement = { from: monthKey(todayStr())+"-01", to: todayStr(), bankId: "" };
 state.aiAssistant = defaultAIAssistantState();
+state.emis = state.emis || [];
 state.aiChatMessages = loadAIChatMessages();
 state.aiChatContext = null;
 state.theme = loadTheme();
@@ -1632,19 +1633,19 @@ function loadState(){
       const budgets = (d.budgets||[]).filter(b => !b.autoCreated);
       return {
         banks: d.banks||[], transactions: d.transactions||[], budgets: migrateBudgets(budgets),
-        goals: d.goals||[], recurring: d.recurring||[], loans: d.loans||[],
+        goals: d.goals||[], recurring: d.recurring||[], loans: d.loans||[], emis: d.emis||[],
         expenseCats: (d.expenseCats&&d.expenseCats.length)?d.expenseCats:DEFAULT_EXPENSE_CATS,
         incomeCats: (d.incomeCats&&d.incomeCats.length)?d.incomeCats:DEFAULT_INCOME_CATS,
       };
     }
   }catch(e){}
-  return { banks:[], transactions:[], budgets:[], goals:[], recurring:[], loans:[], expenseCats:[...DEFAULT_EXPENSE_CATS], incomeCats:[...DEFAULT_INCOME_CATS] };
+  return { banks:[], transactions:[], budgets:[], goals:[], recurring:[], loans:[], emis:[], expenseCats:[...DEFAULT_EXPENSE_CATS], incomeCats:[...DEFAULT_INCOME_CATS] };
 }
 function persist(){
   try{
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       banks: state.banks, transactions: state.transactions, budgets: state.budgets,
-      goals: state.goals, recurring: state.recurring, loans: state.loans,
+      goals: state.goals, recurring: state.recurring, loans: state.loans, emis: state.emis,
       expenseCats: state.expenseCats, incomeCats: state.incomeCats,
     }));
   }catch(e){ alert("Could not save data. Your browser storage may be full or blocked."); }
@@ -1733,6 +1734,7 @@ function buildSyncPayload(){
     goals:state.goals,
     recurring:state.recurring,
     loans:state.loans,
+    emis:state.emis,
     expenseCats:state.expenseCats,
     incomeCats:state.incomeCats,
     adminPassHash: localStorage.getItem(ADMIN_PASS_KEY) || null
@@ -1783,7 +1785,7 @@ function manualSync(){
 function applyRemoteData(remote){
   cloud.applyingRemote = true;
   state.banks = remote.banks||[]; state.transactions = remote.transactions||[]; state.budgets = migrateBudgets(remote.budgets||[]);
-  state.goals = remote.goals||[]; state.recurring = remote.recurring||[]; state.loans = remote.loans||[];
+  state.goals = remote.goals||[]; state.recurring = remote.recurring||[]; state.loans = remote.loans||[]; state.emis = remote.emis||[];
   state.expenseCats = (remote.expenseCats&&remote.expenseCats.length)?remote.expenseCats:DEFAULT_EXPENSE_CATS;
   state.incomeCats = (remote.incomeCats&&remote.incomeCats.length)?remote.incomeCats:DEFAULT_INCOME_CATS;
   if(remote.adminPassHash){
@@ -1915,10 +1917,18 @@ function deleteBank(id){
   const removedTransferIds = new Set(
     state.transactions.filter(t=>t.type==="transfer" && (t.fromBankId===id || t.toBankId===id)).map(t=>t.id)
   );
+  // Plans that belong to this card (if it is a card) disappear with it.
+  const removedEmiIds = new Set((state.emis||[]).filter(e=>e.cardId===id).map(e=>e.id));
   state.banks = state.banks.filter(b=>b.id!==id);
+  state.emis = (state.emis||[]).filter(e=>e.cardId!==id);
   state.transactions = state.transactions.filter(t=>
     t.bankId!==id && t.fromBankId!==id && t.toBankId!==id && !removedTransferIds.has(t.relatedTransferId)
   );
+  // Installments already paid from other accounts stay in the ledger as normal expenses;
+  // drop their emiId link so they are not stuck as un-editable orphans.
+  state.transactions.forEach(t=>{ if(t.emiId && removedEmiIds.has(t.emiId)) delete t.emiId; });
+  // If a paying bank was deleted its installment entries are gone: keep paidCount honest.
+  (state.emis||[]).forEach(e=>syncEmiPaidCount(e.id));
   commit();
 }
 function addCategory(type,name){
@@ -1961,6 +1971,7 @@ function deleteTransaction(id){
     state.transactions = state.transactions.filter(x=>x.id!==id);
     adjustBalance(t.bankId, t.type==="income" ? -t.amount : t.amount);
   }
+  if(t.emiId) syncEmiPaidCount(t.emiId);
   commit();
 }
 function addTransfer(data, skipCommit){
@@ -1997,6 +2008,46 @@ function updateTransfer(id, data){
     state.transactions.push(newFeeTxn);
     adjustBalance(data.fromBankId, -data.fee);
   }
+  commit();
+}
+/* ---- EMI mutations ----
+   Creating a plan reserves the full price against the card limit (available drops
+   right away). Paying an installment posts a normal expense from the paying
+   account, so the month's expense figure shows only that installment. */
+function addEMI(data){
+  const plan = {
+    id: uid(), cardId: data.cardId, title: data.title || "EMI purchase",
+    principal: Math.round((Number(data.principal)||0)*100)/100,
+    monthly: Math.round((Number(data.monthly)||0)*100)/100,
+    months: Math.max(1, parseInt(data.months,10)||1),
+    paidCount: 0, startDate: data.startDate || todayStr(),
+    category: data.category || "Other", note: data.note || ""
+  };
+  state.emis = state.emis || [];
+  state.emis.push(plan);
+  commit();
+  return plan;
+}
+function payEMI(id, bankId, date){
+  const e = (state.emis||[]).find(x=>x.id===id);
+  if(!e || emiIsDone(e)) return null;
+  const idx = e.paidCount || 0;
+  const amount = emiInstallmentAmount(e, idx);
+  const payDate = date || emiNextDueDate(e) || todayStr();
+  const txn = addTransaction({
+    type:"expense", bankId, amount, category: e.category || "Other",
+    note: (e.title||"EMI") + " — installment " + (idx+1) + "/" + e.months, date: payDate
+  }, true);
+  txn.emiId = e.id;
+  state.emis = state.emis.map(x => x.id===id ? {...x, paidCount: idx+1} : x);
+  commit();
+  return { plan: state.emis.find(x=>x.id===id), txn };
+}
+function deleteEMI(id){
+  // Undo the bank-account effect of every installment already paid for this plan
+  state.transactions.filter(t=>t.emiId===id).forEach(t=>adjustBalance(t.bankId, t.amount));
+  state.emis = (state.emis||[]).filter(e=>e.id!==id);
+  state.transactions = state.transactions.filter(t=>t.emiId!==id);
   commit();
 }
 function addBudget(data){ state.budgets.push({id:uid(), ...data}); commit(); }
@@ -2133,13 +2184,71 @@ function settleLoan(id){
 function deleteLoan(id){ state.loans = state.loans.filter(l=>l.id!==id); commit(); }
 
 /* ---------------- derived ---------------- */
-function totalBalance(){ return state.banks.reduce((s,b)=>s+b.balance,0); }
+function totalBalance(){ return state.banks.reduce((s,b)=>s+b.balance,0) - totalEmiRemaining(); }
 function cardAccounts(){ return state.banks.filter(b=>b.isCard); }
-function totalCardDebt(){ return cardAccounts().reduce((s,b)=>s+Math.max(0,-b.balance),0); }
+function totalEmiRemaining(){ return (state.emis||[]).reduce((s,e)=>s+emiRemaining(e),0); }
+function totalCardDebt(){ return cardAccounts().reduce((s,b)=>s+cardOwedTotal(b),0); }
 // Available cash & bank money — sum of all non-card account balances.
 // Equivalent to Net Worth + Credit Card Debt (e.g. -33,049 + 49,536 = 16,487).
 function availableLiquidity(){ return state.banks.filter(b=>!b.isCard).reduce((s,b)=>s+b.balance,0); }
 function isCardAccount(id){ const b=bankById(id); return !!(b&&b.isCard); }
+
+/* ---------------- EMI plans on credit cards ----------------
+   An EMI purchase doesn't post an expense up-front. Instead the plan tracks how
+   much of the card limit this purchase has blocked, so "available" drops by the
+   full price immediately and climbs back as each monthly installment is paid.
+   Installments themselves are real expenses from the paying bank account, which
+   keeps every month's expense figure accurate (2000/month, not 12000 once). */
+function emiPlansForCard(cardId){ return (state.emis||[]).filter(e=>e.cardId===cardId); }
+function round2(n){ return Math.round(n*100)/100; }
+// Build the whole installment schedule up front so rounding never drifts: each
+// month is the round-2 monthly figure and the last month takes the remainder,
+// which keeps the sum exactly equal to the purchase price.
+function emiSchedule(e){
+  const months = Math.max(1, parseInt(e.months,10)||1);
+  const monthly = round2(Number(e.monthly)||0);
+  let remaining = round2(Number(e.principal)||0);
+  const out = [];
+  for(let i=0;i<months;i++){
+    const amt = i===months-1 ? remaining : round2(Math.min(monthly, remaining));
+    out.push(Math.max(0, amt));
+    remaining = round2(remaining - Math.max(0, amt));
+  }
+  return out;
+}
+function emiInstallmentAmount(e, i){ return emiSchedule(e)[i] || 0; }
+function emiPaidAmount(e){
+  const sched = emiSchedule(e);
+  let sum = 0;
+  for(let i=0;i<Math.min(e.paidCount||0, sched.length);i++) sum += sched[i];
+  return round2(sum);
+}
+function emiRemaining(e){ return round2(Math.max(0, (Number(e.principal)||0) - emiPaidAmount(e))); }
+function emiRemainingForCard(cardId){
+  return emiPlansForCard(cardId).reduce((s,e)=>s+emiRemaining(e), 0);
+}
+function emiIsDone(e){ return (e.paidCount||0) >= (e.months||0) || emiRemaining(e) <= 0; }
+// Keep paidCount honest when an installment transaction is deleted or re-added
+// elsewhere (ledger delete, account deletion, restore from backup).
+function syncEmiPaidCount(emiId){
+  const e = (state.emis||[]).find(x=>x.id===emiId);
+  if(!e) return;
+  const n = state.transactions.filter(t=>t.emiId===emiId).length;
+  e.paidCount = Math.min(n, e.months||n);
+}
+function cardOwedTotal(b){ return Math.max(0,-b.balance) + emiRemainingForCard(b.id); }
+function cardAvailable(b){ return Math.max(0, (Number(b.creditLimit)||0) - cardOwedTotal(b)); }
+function addMonthsClamped(dateStr, n){
+  const [y,m,d] = dateStr.split("-").map(Number);
+  const total = (y*12 + (m-1)) + n;
+  const ny = Math.floor(total/12), nm = (total%12)+1;
+  const last = new Date(ny, nm, 0).getDate();
+  return ny+"-"+String(nm).padStart(2,"0")+"-"+String(Math.min(d,last)).padStart(2,"0");
+}
+function emiNextDueDate(e){
+  if(emiIsDone(e)) return null;
+  return addMonthsClamped(e.startDate, (e.paidCount||0)+1);
+}
 function outstandingLent(){ return state.loans.filter(l=>l.type==="lent"&&!l.settled).reduce((s,l)=>s+l.amount,0); }
 function outstandingBorrowed(){ return state.loans.filter(l=>l.type==="borrowed"&&!l.settled).reduce((s,l)=>s+l.amount,0); }
 function overBudget(){ const ms=monthlySpend(); return budgetsForMonth(monthKey(todayStr())).filter(b=>!b.autoCreated && (ms[b.category]||0) > b.limit); }
@@ -2187,7 +2296,15 @@ function rangeData(from, to){
   const cardPurchases = txns.filter(t => (t.type==="expense" && isCardAccount(t.bankId)) || (t.type==="transfer" && isCardAccount(t.fromBankId))).reduce((s,t)=>s+t.amount,0);
   const cardPayments = txns.filter(t => t.type==="transfer" && isCardAccount(t.toBankId) && !isCardAccount(t.fromBankId)).reduce((s,t)=>s+t.amount,0);
   const savingsRate = income>0 ? ((income-expense)/income)*100 : 0;
-  return { txns, income, expense, net: income-expense, byCat, incomeByCat, budgetRows, cardPurchases, cardPayments, savingsRate };
+  // EMI: a plan counts as a card purchase on its purchase date (startDate). Its monthly
+  // installments are ordinary expenses (already inside `expense`), so they are shown
+  // separately here only for information and are NOT added to purchases again.
+  const emiPlans = (state.emis||[]).filter(e => e.startDate && e.startDate>=from && e.startDate<=to);
+  const emiPurchases = emiPlans.reduce((s,e)=>s+(Number(e.principal)||0),0);
+  const emiInstallments = txns.filter(t=>t.emiId).reduce((s,t)=>s+t.amount,0);
+  return { txns, income, expense, net: income-expense, byCat, incomeByCat, budgetRows,
+    cardPurchases: cardPurchases + emiPurchases, cardPayments, savingsRate,
+    emiPlans, emiPurchases, emiInstallments };
 }
 function getMonthsInRange(from, to){
   const months = [];
@@ -2259,7 +2376,8 @@ function reportPreviewHTML(from, to){
     ${heading("Financial Status")}
     ${line("Net Worth (all accounts, as of today)", taka(totalBalance()))}
     ${line("Available Liquidity (Cash & Bank)", taka(availableLiquidity()), {color:"var(--green-light)"})}
-    ${line("Credit Card Debt", taka(totalCardDebt()), {color:"var(--red)"})}
+    ${line("Credit Card Debt (incl. EMI)", taka(totalCardDebt()), {color:"var(--red)"})}
+    ${line("&nbsp;&nbsp;of which EMI outstanding", taka(totalEmiRemaining()), {color:"var(--red)"})}
     ${heading("Monthly Performance")}
     ${line("Income (this period)", taka(d.income), {color:"var(--green-light)"})}
     ${line("Expense (this period)", taka(d.expense), {color:"var(--red)"})}
@@ -2267,6 +2385,8 @@ function reportPreviewHTML(from, to){
     ${line("Savings Rate", d.savingsRate.toFixed(1)+"%")}
     ${heading("Credit Card Summary")}
     ${line("Purchased through Credit card this period", taka(d.cardPurchases))}
+    ${line("&nbsp;&nbsp;of which new EMI purchases", taka(d.emiPurchases))}
+    ${line("EMI installments paid this period", taka(d.emiInstallments))}
     ${line("Fund transferred to credit card this period", taka(d.cardPayments))}
   </div>`;
 }
@@ -2370,7 +2490,8 @@ function rptDashboardPage(from, to){
     <table class="rpt-kv" style="margin-bottom:18px;">
       <tr><td>Net Worth (all accounts, as of today)</td><td class="num">${taka(nw)}</td></tr>
       <tr><td>Available Liquidity (Cash & Bank)</td><td class="num">${taka(availableLiquidity())}</td></tr>
-      <tr><td>Credit Card Debt</td><td class="num">${taka(totalCardDebt())}</td></tr>
+      <tr><td>Credit Card Debt (incl. EMI)</td><td class="num">${taka(totalCardDebt())}</td></tr>
+      <tr><td>&nbsp;&nbsp;of which EMI outstanding</td><td class="num">${taka(totalEmiRemaining())}</td></tr>
     </table>
     <h3 class="rpt-h3">Monthly Performance</h3>
     <table class="rpt-kv" style="margin-bottom:18px;">
@@ -2382,6 +2503,8 @@ function rptDashboardPage(from, to){
     <h3 class="rpt-h3">Credit Card Summary</h3>
     <table class="rpt-kv" style="margin-bottom:18px;">
       <tr><td>Purchased through Credit card this period</td><td class="num">${taka(d.cardPurchases)}</td></tr>
+      <tr><td>&nbsp;&nbsp;of which new EMI purchases</td><td class="num">${taka(d.emiPurchases)}</td></tr>
+      <tr><td>EMI installments paid this period</td><td class="num">${taka(d.emiInstallments)}</td></tr>
       <tr><td>Fund transferred to credit card this period</td><td class="num">${taka(d.cardPayments)}</td></tr>
     </table>
     <h3 class="rpt-h3">Expenses by Category</h3>
@@ -2401,8 +2524,8 @@ function rptAccountsPage(){
       ${normal.map(b=>`<tr><td>${esc(b.name)}</td><td class="num">${taka(b.balance)}</td></tr>`).join("")}
     </tbody></table>
     ${cards.length ? `<h3 class="rpt-h3">Credit Cards</h3>
-    <table class="rpt-table"><thead><tr><th>Card</th><th class="num">Owed</th><th class="num">Limit</th></tr></thead><tbody>
-      ${cards.map(b=>`<tr><td>${esc(b.name)}</td><td class="num">${taka(Math.max(0,-b.balance))}</td><td class="num">${b.creditLimit?taka(b.creditLimit):"—"}</td></tr>`).join("")}
+    <table class="rpt-table"><thead><tr><th>Card</th><th class="num">Available</th><th class="num">Owed</th><th class="num">Limit</th></tr></thead><tbody>
+      ${cards.map(b=>`<tr><td>${esc(b.name)}</td><td class="num">${taka(cardAvailable(b))}</td><td class="num">${taka(cardOwedTotal(b))}</td><td class="num">${b.creditLimit?taka(b.creditLimit):"—"}</td></tr>`).join("")}
     </tbody></table>` : ""}
     <table class="rpt-kv" style="margin-top:14px;"><tr class="total"><td>Net Worth</td><td class="num">${taka(totalBalance())}</td></tr></table>
     `}
@@ -2483,6 +2606,40 @@ function rptTransactionsPage(from, to){
   ` + rptPageClose();
 }
 
+function rptEmiPage(from, to){
+  const plans = state.emis||[];
+  const d = rangeData(from, to);
+  const instalTxns = d.txns.filter(t=>t.emiId);
+  const planTitle = id => { const e = plans.find(x=>x.id===id); return e ? (e.title||"EMI purchase") : "EMI"; };
+  const monthlyCommit = plans.filter(e=>!emiIsDone(e)).reduce((s,e)=>s+(Number(e.monthly)||0),0);
+  const totalRemaining = plans.reduce((s,e)=>s+emiRemaining(e),0);
+  return rptPageOpen("EMI Plans") + `
+    <h1 class="rpt-h1">EMI Plans &amp; Installments</h1>
+    <p class="rpt-period">Period: ${fmtDate(from)} – ${fmtDate(to)} · Plan status as of ${fmtDate(todayStr())}</p>
+    <table class="rpt-kv" style="margin-bottom:18px;">
+      <tr><td>New EMI purchases this period</td><td class="num">${taka(d.emiPurchases)}</td></tr>
+      <tr><td>Installments paid this period</td><td class="num">${taka(d.emiInstallments)}</td></tr>
+      <tr><td>Total EMI outstanding (today)</td><td class="num">${taka(totalRemaining)}</td></tr>
+      <tr class="total"><td>Monthly EMI commitment (active plans)</td><td class="num">${taka(monthlyCommit)}</td></tr>
+    </table>
+    <h3 class="rpt-h3">All EMI Plans</h3>
+    ${plans.length ? `<table class="rpt-table"><thead><tr><th>Plan</th><th>Card</th><th>Purchased</th><th class="num">Price</th><th class="num">Monthly</th><th class="num">Paid</th><th class="num">Remaining</th><th>Status</th></tr></thead><tbody>
+      ${plans.map(e=>{
+        const months = Math.max(1, Number(e.months)||1);
+        const done = emiIsDone(e);
+        const due = emiNextDueDate(e);
+        return `<tr><td>${esc(e.title||"EMI purchase")}</td><td>${esc(bankName_(e.cardId))}</td><td>${e.startDate||"—"}</td><td class="num">${taka(Number(e.principal)||0)}</td><td class="num">${taka(Number(e.monthly)||0)} × ${months}</td><td class="num">${taka(emiPaidAmount(e))} (${Math.min(e.paidCount||0,months)}/${months})</td><td class="num">${taka(emiRemaining(e))}</td><td>${done?"Completed":"Next due "+(due||"—")}</td></tr>`;
+      }).join("")}
+    </tbody></table>` : `<p class="rpt-empty">No EMI plans.</p>`}
+    <h3 class="rpt-h3">Installments Paid in This Period</h3>
+    ${instalTxns.length ? `<table class="rpt-table"><thead><tr><th>Date</th><th>Plan</th><th>Paid From</th><th class="num">Amount</th></tr></thead><tbody>
+      ${instalTxns.map(t=>`<tr><td>${t.date}</td><td>${esc(planTitle(t.emiId))}${t.note?' — '+esc(t.note):''}</td><td>${esc(bankName_(t.bankId))}</td><td class="num">${taka(t.amount)}</td></tr>`).join("")}
+      <tr class="rpt-total"><td colspan="3">Total</td><td class="num">${taka(d.emiInstallments)}</td></tr>
+    </tbody></table>` : `<p class="rpt-empty">No installments paid in this period.</p>`}
+    <p class="rpt-note">A new EMI purchase is counted on its purchase date. Each installment is an ordinary expense from the paying account, so it is already included in the period's total expenses and is not double counted.</p>
+  ` + rptPageClose();
+}
+
 function rptCoverPage(from, to){
   return `<section class="rpt-cover">
     <div class="rpt-cover-emblem">🏛️</div>
@@ -2535,7 +2692,9 @@ function rptBalanceSheetPage(){
   const overdrawn = state.banks.filter(b=>!isCardAccount(b.id)).reduce((s,b)=>s+Math.max(0,-b.balance),0);
   const loansReceivable = state.loans.filter(l=>l.type==="lent" && !l.settled).reduce((s,l)=>s+l.amount,0);
   const loansPayable = state.loans.filter(l=>l.type==="borrowed" && !l.settled).reduce((s,l)=>s+l.amount,0);
-  const cardDebt = state.banks.filter(b=>isCardAccount(b.id)).reduce((s,b)=>s+Math.max(0,-b.balance),0);
+  const cardBalanceDebt = state.banks.filter(b=>isCardAccount(b.id)).reduce((s,b)=>s+Math.max(0,-b.balance),0);
+  const emiOutstanding = state.banks.filter(b=>isCardAccount(b.id)).reduce((s,b)=>s+emiRemainingForCard(b.id),0);
+  const cardDebt = cardBalanceDebt + emiOutstanding;
 
   const totalAssets = cashAssets + loansReceivable;
   const totalLiabilities = cardDebt + loansPayable + overdrawn;
@@ -2546,7 +2705,8 @@ function rptBalanceSheetPage(){
     ["Loans Receivable (owed to you)", loansReceivable],
   ].filter(r=>r[1]!==0);
   const liabRows = [
-    ["Credit Card Debt", cardDebt],
+    ["Credit Card Balance Owed", cardBalanceDebt],
+    ["EMI Outstanding (blocked on card limit)", emiOutstanding],
     ["Loans Payable (you owe)", loansPayable],
     ["Overdrawn Accounts", overdrawn],
   ].filter(r=>r[1]!==0);
@@ -2641,6 +2801,7 @@ function generatePrintReportHTML(from, to){
     rptAccountsPage(),
     rptAccountStatementsPage(from, to),
   ];
+  if((state.emis||[]).length) pages.push(rptEmiPage(from, to));
   if(state.budgets.length) pages.push(rptBudgetsPage(from, to));
   if(state.goals.length) pages.push(rptGoalsPage());
   if(state.recurring.length) pages.push(rptRecurringPage());
@@ -2771,7 +2932,7 @@ function saveFile(text, filename, mime){
   render();
 }
 function exportData(){
-  const payload = { banks:state.banks, transactions:state.transactions, budgets:state.budgets, goals:state.goals, recurring:state.recurring, loans:state.loans, expenseCats:state.expenseCats, incomeCats:state.incomeCats, exportedAt: new Date().toISOString() };
+  const payload = { banks:state.banks, transactions:state.transactions, budgets:state.budgets, goals:state.goals, recurring:state.recurring, loans:state.loans, emis:state.emis, expenseCats:state.expenseCats, incomeCats:state.incomeCats, exportedAt: new Date().toISOString() };
   saveFile(JSON.stringify(payload,null,2), "my-ledger-backup-"+todayStr()+".json", "application/json");
 }
 function importDataFromFile(file){
@@ -2782,7 +2943,7 @@ function importDataFromFile(file){
       if(!confirm("This will replace your current data with the backup file. Continue?")) return;
       if(!(await requireAdminPassword("Restore backup file"))) return;
       state.banks = d.banks||[]; state.transactions = d.transactions||[]; state.budgets = migrateBudgets(d.budgets||[]);
-      state.goals = d.goals||[]; state.recurring = d.recurring||[]; state.loans = d.loans||[];
+      state.goals = d.goals||[]; state.recurring = d.recurring||[]; state.loans = d.loans||[]; state.emis = d.emis||[];
       state.expenseCats = (d.expenseCats&&d.expenseCats.length)?d.expenseCats:DEFAULT_EXPENSE_CATS;
       state.incomeCats = (d.incomeCats&&d.incomeCats.length)?d.incomeCats:DEFAULT_INCOME_CATS;
       commit();
@@ -3017,12 +3178,16 @@ function renderDashboard(){
   if(cards.length){
     html += `<div style="margin-bottom:22px;"><h2 class="section-title">Credit Card Status</h2><div class="grid">
       ${cards.map(c=>{
-        const owed = Math.max(0,-c.balance);
+        const owed = cardOwedTotal(c);
+        const available = cardAvailable(c);
         const pct = c.creditLimit ? Math.min(100,(owed/c.creditLimit)*100) : 0;
         const barColor = pct>80?"var(--red)":pct>30?"var(--gold)":"var(--green-light)";
         return `<div class="card bordered" style="--accent:${c.color}">
           <div style="font-size:13.5px;color:var(--muted);margin-bottom:4px;">${esc(c.name)}</div>
-          <div class="amt" style="font-size:19px;font-weight:700;color:var(--red);margin-bottom:8px;">${taka(owed)} owed</div>
+          <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:8px;">
+            <div><div class="stat-label">Available</div><div class="amt" style="font-size:17px;font-weight:700;color:${available>0?'var(--green-light)':'var(--red)'}">${taka(available)}</div></div>
+            <div><div class="stat-label">Owed</div><div class="amt" style="font-size:17px;font-weight:700;color:${owed>0?'var(--red)':'var(--muted)'}">${taka(owed)}</div></div>
+          </div>
           ${c.creditLimit ? `<div class="progress-track"><div class="progress-fill" style="width:${pct}%;background:${barColor};"></div></div>
           <div style="font-size:11.5px;color:var(--muted);margin-top:4px;">${pct.toFixed(0)}% of ${taka(c.creditLimit)} limit used</div>` : ""}
         </div>`;
@@ -3071,7 +3236,7 @@ function renderLedger(items, allowDelete){
       </div>
       <div class="amt ledger-amt" style="color:${amtColor}">${isTransfer?"":(t.type==="income"?"+":"-")}${taka(t.amount)}</div>
       ${allowDelete && !t.relatedTransferId ? `<div style="display:flex;gap:4px;">
-        <button class="icon-btn" data-action="edit-txn" data-id="${t.id}">${ICON.edit}</button>
+        ${t.emiId ? "" : `<button class="icon-btn" data-action="edit-txn" data-id="${t.id}">${ICON.edit}</button>`}
         <button class="icon-btn" data-action="delete-txn" data-id="${t.id}">${ICON.trash}</button>
       </div>` : ""}
     </div>`;
@@ -3094,6 +3259,7 @@ function renderAccounts(){
       html += `<div style="font-size:13px;color:var(--muted);margin-bottom:10px;">💳 Credit Cards</div><div class="grid acc-dnd" data-group="card">${cards.map(b=>accountCard(b,true)).join("")}</div>`;
     }
   }
+  html += renderEmiPlansSection();
   html += renderAccountStatementSection();
   return html;
 }
@@ -3164,16 +3330,80 @@ function renderAccountStatementTable(from, to, bankId){
   </div>`;
 }
 function accountCard(b, isCard){
-  const displayVal = isCard ? Math.max(0,-b.balance) : b.balance;
-  const color = isCard ? "var(--red)" : (displayVal>=0 ? "var(--ink)" : "var(--red)");
-  return `<div class="card bordered acc-card" draggable="true" data-bank-id="${b.id}" style="--accent:${b.color};cursor:grab;">
-    <div style="position:absolute;top:10px;right:10px;display:flex;gap:2px;">
+  const actions = `<div style="position:absolute;top:10px;right:10px;display:flex;gap:2px;">
       <button class="icon-btn" data-action="edit-bank" data-id="${b.id}">${ICON.edit}</button>
       <button class="icon-btn" data-action="delete-bank" data-id="${b.id}">${ICON.trash}</button>
+    </div>`;
+
+  if(!isCard){
+    const color = b.balance>=0 ? "var(--ink)" : "var(--red)";
+    return `<div class="card bordered acc-card" draggable="true" data-bank-id="${b.id}" style="--accent:${b.color};cursor:grab;">
+      ${actions}
+      <div style="font-size:14px;color:var(--muted);margin-bottom:6px;padding-right:56px;">${esc(b.name)}</div>
+      <div class="amt" style="font-size:22px;font-weight:700;color:${color}">${taka(b.balance)}</div>
+    </div>`;
+  }
+
+  const limit = Number(b.creditLimit)||0;
+  const owed = cardOwedTotal(b);
+  const available = cardAvailable(b);
+  const pct = limit ? Math.min(100,(owed/limit)*100) : 0;
+  const barColor = pct>80?"var(--red)":pct>30?"var(--gold)":"var(--green-light)";
+  return `<div class="card bordered acc-card" draggable="true" data-bank-id="${b.id}" style="--accent:${b.color};cursor:grab;">
+    ${actions}
+    <div style="font-size:14px;color:var(--muted);margin-bottom:8px;padding-right:56px;">${esc(b.name)}</div>
+    <div style="display:flex;gap:18px;flex-wrap:wrap;">
+      ${limit ? `<div>
+        <div class="stat-label">Available</div>
+        <div class="amt" style="font-size:20px;font-weight:700;color:${available>0?'var(--green-light)':'var(--red)'}">${taka(available)}</div>
+      </div>` : ""}
+      <div>
+        <div class="stat-label">Owed</div>
+        <div class="amt" style="font-size:20px;font-weight:700;color:${owed>0?'var(--red)':'var(--muted)'}">${taka(owed)}</div>
+      </div>
     </div>
-    <div style="font-size:14px;color:var(--muted);margin-bottom:6px;padding-right:56px;">${esc(b.name)}</div>
-    <div class="amt" style="font-size:22px;font-weight:700;color:${color}">${taka(displayVal)}${isCard?" owed":""}</div>
-    ${isCard && b.creditLimit ? `<div style="font-size:11.5px;color:var(--muted);margin-top:4px;">Limit ${taka(b.creditLimit)}</div>` : ""}
+    ${limit ? `<div class="progress-track" style="margin-top:10px;"><div class="progress-fill" style="width:${pct}%;background:${barColor};"></div></div>
+      <div style="font-size:11.5px;color:var(--muted);margin-top:4px;">Limit ${taka(limit)} · ${pct.toFixed(0)}% used</div>` : ""}
+    <button class="btn-outline" data-action="open-emi" data-id="${b.id}" style="margin-top:12px;width:100%;justify-content:center;">${ICON.plus} Add EMI</button>
+  </div>`;
+}
+function renderEmiPlansSection(){
+  const plans = (state.emis||[]).filter(e=>state.banks.some(b=>b.id===e.cardId));
+  if(!plans.length) return "";
+  const rows = plans.map(e=>{
+    const card = bankById(e.cardId);
+    const months = Math.max(1, Number(e.months)||1);
+    const paid = emiPaidAmount(e);
+    const principal = Number(e.principal)||0;
+    const pct = principal ? Math.min(100,(paid/principal)*100) : 0;
+    const done = emiIsDone(e);
+    const due = emiNextDueDate(e);
+    return `<div class="card bordered" style="--accent:${card?card.color:'var(--green)'};margin-bottom:10px;">
+      <div class="row-between" style="align-items:flex-start;gap:10px;">
+        <div>
+          <div style="font-weight:700;">${esc(e.title||"EMI purchase")}</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:2px;">${esc(card?card.name:"")} · ${taka(e.monthly)} × ${months} months</div>
+        </div>
+        ${done
+          ? `<div style="font-size:12px;font-weight:700;color:var(--green-light);">Completed</div>`
+          : `<button class="btn-fill" data-action="emi-pay" data-id="${e.id}" style="min-width:100px;justify-content:center;">Pay Now</button>`}
+      </div>
+      <div class="progress-track" style="margin-top:10px;"><div class="progress-fill" style="width:${pct}%;background:${done?'var(--green-light)':'var(--gold)'};"></div></div>
+      <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:11.5px;color:var(--muted);margin-top:6px;">
+        <span>${taka(paid)} paid · ${taka(emiRemaining(e))} remaining (${Math.min(e.paidCount||0,months)}/${months})</span>
+        <span>${done ? "" : "Next due " + fmtDate(due)}</span>
+      </div>
+      <div style="display:flex;justify-content:flex-end;margin-top:6px;">
+        <button class="icon-btn" data-action="delete-emi" data-id="${e.id}">${ICON.trash}</button>
+      </div>
+    </div>`;
+  }).join("");
+  const totalMonthly = plans.filter(e=>!emiIsDone(e)).reduce((s,e)=>s+(Number(e.monthly)||0),0);
+  const totalRemaining = plans.reduce((s,e)=>s+emiRemaining(e),0);
+  return `<div style="margin-top:22px;">
+    <div class="row-between"><h2 class="section-title">EMI Plans</h2>
+      <div style="font-size:12px;color:var(--muted);">${taka(totalRemaining)} outstanding · ${taka(totalMonthly)}/month</div></div>
+    ${rows}
   </div>`;
 }
 
@@ -3422,6 +3652,8 @@ function renderModal(){
   if(m.type==="account") { title = m.editId ? "Edit Account" : "New Account"; body = accountForm(m.editId); }
   else if(m.type==="transaction") { title = m.editId ? "Edit Transaction" : "New Transaction"; body = transactionForm(m.editId); }
   else if(m.type==="transfer") { title = m.editId ? "Edit Transfer" : "Transfer Between Accounts"; body = transferForm(m.editId); }
+  else if(m.type==="emi") { title="New EMI Plan"; body = emiForm(m.cardId); }
+  else if(m.type==="emi-pay") { title="Pay EMI Installment"; body = emiPayForm(m.emiId); }
   else if(m.type==="budget") { title = m.editId ? "Edit Budget" : "New Budget"; body = budgetForm(m.editId); }
   else if(m.type==="movebudget") { title = (m.mode==="copy"?"Copy":"Move")+" Budget"; body = moveBudgetForm(m.budgetId, m.mode); }
   else if(m.type==="categories") { title="Expense Categories"; body = categoriesForm(); }
@@ -3751,6 +3983,59 @@ function accountForm(editId){
     <label class="field" id="acc-balance-label">${isCard?'Current Balance Owed (৳)':'Current Balance (৳)'}<input type="number" id="acc-balance" placeholder="0" value="${displayBalance}" /></label>
     <div id="acc-limit-wrap" style="display:${isCard?'block':'none'};"><label class="field">Credit Limit (৳)<input type="number" id="acc-limit" placeholder="0" value="${editing&&editing.creditLimit?editing.creditLimit:''}" /></label></div>
     <button type="submit" class="btn-submit">${editing?'Save Changes':'Add'}</button>
+  </form>`;
+}
+function emiForm(cardId){
+  const cards = cardAccounts();
+  const selected = cardId || (cards[0] ? cards[0].id : "");
+  const card = cards.find(c=>c.id===selected);
+  const avail = card ? cardAvailable(card) : 0;
+  return `<form class="stack" id="form-emi">
+    <label class="field">Credit Card
+      <select id="emi-card">
+        ${cards.map(c=>`<option value="${c.id}" ${c.id===selected?'selected':''}>${esc(c.name)} — ${taka(cardAvailable(c))} available</option>`).join("")}
+      </select>
+    </label>
+    <label class="field">Purchase / Plan Name<input id="emi-title" placeholder="e.g. iPhone 15" required /></label>
+    <label class="field">Total Purchase Price (৳)<input type="number" id="emi-principal" placeholder="12000" min="0" step="0.01" required /></label>
+    <div style="display:flex;gap:10px;">
+      <label class="field" style="flex:1;">Months<input type="number" id="emi-months" placeholder="6" min="1" step="1" value="6" required /></label>
+      <label class="field" style="flex:1;">Monthly (৳)<input type="number" id="emi-monthly" placeholder="2000" min="0" step="0.01" /></label>
+    </div>
+    <div id="emi-preview" style="font-size:11.5px;color:var(--muted);margin:-6px 0 0;"></div>
+    <label class="field">Category
+      <select id="emi-category">${state.expenseCats.map(c=>`<option value="${esc(c)}" ${c==="Shopping"?'selected':''}>${esc(c)}</option>`).join("")}</select>
+    </label>
+    <label class="field">Purchase Date<input type="date" id="emi-start" value="${todayStr()}" /></label>
+    <p style="font-size:11.5px;color:var(--muted);margin:-4px 0 0;">The full price is blocked from your limit right away and the first installment falls due one month after the purchase date. Each "Pay Now" posts that month's installment as an expense from your bank account and frees up the same amount of credit. Available now: ${taka(avail)}.</p>
+    <button type="submit" class="btn-submit">Create EMI Plan</button>
+  </form>`;
+}
+function emiPayForm(emiId){
+  const e = (state.emis||[]).find(x=>x.id===emiId);
+  if(!e) return `<div class="empty">EMI plan not found.</div>`;
+  const idx = e.paidCount||0;
+  const months = Math.max(1, Number(e.months)||1);
+  const amount = emiInstallmentAmount(e, idx);
+  const payFrom = state.banks.filter(b=>!b.isCard);
+  const card = bankById(e.cardId);
+  if(!payFrom.length){
+    return `<div class="empty">Add a bank account first — installments are paid from your bank balance.</div>`;
+  }
+  return `<form class="stack" id="form-emi-pay">
+    <div class="card" style="margin:0;">
+      <div style="font-weight:700;">${esc(e.title||"EMI purchase")}</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:2px;">Installment ${idx+1} of ${months} · ${esc(card?card.name:"")} · due ${fmtDate(emiNextDueDate(e))}</div>
+      <div class="amt" style="font-size:22px;font-weight:700;margin-top:8px;">${taka(amount)}</div>
+    </div>
+    <label class="field">Pay From
+      <select id="emi-pay-bank">
+        ${payFrom.map(b=>`<option value="${b.id}">${esc(b.name)} — ${taka(b.balance)}</option>`).join("")}
+      </select>
+    </label>
+    <label class="field">Payment Date<input type="date" id="emi-pay-date" value="${todayStr()}" /></label>
+    <p style="font-size:11.5px;color:var(--muted);margin:-4px 0 0;">This posts a ${taka(amount)} expense and adds ${taka(amount)} back to the card's available limit.</p>
+    <button type="submit" class="btn-submit">Pay ${taka(amount)}</button>
   </form>`;
 }
 function transactionForm(editId){
@@ -4207,6 +4492,19 @@ function attachHandlers(){
       state.modal = { type:"account", editId:id }; render();
     }
     else if(action==="delete-bank"){ if(!(await requireAdminPassword("Delete account"))) return; deleteBank(id); }
+    else if(action==="open-emi"){
+      if(!(await requireAdminPassword("Add EMI plan"))) return;
+      state.modal = { type:"emi", cardId:id }; render();
+    }
+    else if(action==="emi-pay"){
+      if(!(await requireAdminPassword("Pay EMI installment"))) return;
+      state.modal = { type:"emi-pay", emiId:id }; render();
+    }
+    else if(action==="delete-emi"){
+      if(!(await requireAdminPassword("Delete EMI plan"))) return;
+      if(!confirm("Delete this EMI plan? Its paid installments will also be removed from the ledger.")) return;
+      deleteEMI(id);
+    }
     else if(action==="generate-account-statement"){
       const from = document.getElementById("stmt-from").value || (monthKey(todayStr())+"-01");
       const to = document.getElementById("stmt-to").value || todayStr();
@@ -4219,6 +4517,7 @@ function attachHandlers(){
     else if(action==="edit-txn"){ 
       const t = state.transactions.find(x=>x.id===id);
       if(!t) return;
+      if(t.emiId){ alert("This is an EMI installment. Its amount comes from the EMI plan, so edit the plan or delete this entry instead."); return; }
       if(!(await requireAdminPassword(t.type==="transfer" ? "Edit transfer" : "Edit transaction"))) return;
       state.modal = { type: t.type==="transfer" ? "transfer" : "transaction", editId:id };
       render();
@@ -4375,6 +4674,41 @@ function attachHandlers(){
     const editId = state.modal && state.modal.editId;
     const data = { name, balance: isCard ? -bal : bal, isCard, creditLimit: isCard ? (parseFloat(document.getElementById("acc-limit").value)||0) : null };
     if(editId){ if(!(await requireAdminPassword("Save account changes"))) return; updateBank(editId, data); } else { addBank(data); }
+    state.modal=null; render();
+  });
+  bindForm("form-emi", () => {
+    const cardId = document.getElementById("emi-card").value;
+    const title = document.getElementById("emi-title").value.trim();
+    const principal = parseFloat(document.getElementById("emi-principal").value)||0;
+    const months = parseInt(document.getElementById("emi-months").value,10)||0;
+    const monthlyInput = parseFloat(document.getElementById("emi-monthly").value)||0;
+    const monthly = monthlyInput>0 ? monthlyInput : (months>0 ? principal/months : 0);
+    const category = document.getElementById("emi-category").value;
+    const startDate = document.getElementById("emi-start").value || todayStr();
+    if(!cardId || !title || principal<=0 || months<=0) return;
+    if(months>1 && monthly*(months-1) >= principal){
+      alert("Monthly amount is too high — the purchase would be fully paid before "+months+" months. Lower the monthly amount or reduce the months.");
+      return;
+    }
+    const card = bankById(cardId);
+    if(card && !(Number(card.creditLimit)>0)){
+      alert("Set a credit limit on this card first (edit the account), then create the EMI plan.");
+      return;
+    }
+    if(card && principal > cardAvailable(card)){
+      alert("This purchase ("+taka(principal)+") is more than the card's available limit ("+taka(cardAvailable(card))+").");
+      return;
+    }
+    addEMI({ cardId, title, principal, monthly, months, category, startDate });
+    state.modal=null; render();
+  });
+  bindForm("form-emi-pay", () => {
+    const bankId = document.getElementById("emi-pay-bank").value;
+    const date = document.getElementById("emi-pay-date").value || todayStr();
+    const emiId = state.modal && state.modal.emiId;
+    if(!bankId || !emiId) return;
+    const res = payEMI(emiId, bankId, date);
+    if(!res){ alert("This EMI plan is already fully paid."); }
     state.modal=null; render();
   });
   bindForm("form-transaction", async () => {
@@ -4680,6 +5014,33 @@ function setupModalExtras(){
   const toEl = document.getElementById("report-to");
   if(fromEl && toEl && state.reportType === "comparison"){
     initComparisonChart(fromEl.value, toEl.value);
+  }
+  // EMI: keep Monthly in sync with total/months and show a live preview
+  const emiPrincipal = document.getElementById("emi-principal");
+  if(emiPrincipal){
+    const emiMonths = document.getElementById("emi-months");
+    const emiMonthly = document.getElementById("emi-monthly");
+    const emiPreview = document.getElementById("emi-preview");
+    const emiCardSel = document.getElementById("emi-card");
+    const updatePreview = (autoFill) => {
+      const p = parseFloat(emiPrincipal.value)||0;
+      const m = parseInt(emiMonths.value,10)||0;
+      const monthly = parseFloat(emiMonthly.value)||0;
+      if(autoFill && p>0 && m>0) emiMonthly.value = Math.round((p/m)*100)/100;
+      const per = parseFloat(emiMonthly.value)|| (m>0 ? p/m : 0);
+      const card = bankById(emiCardSel ? emiCardSel.value : "");
+      const avail = card ? cardAvailable(card) : 0;
+      if(emiPreview){
+        emiPreview.textContent = (p>0 && m>0 && per>0)
+          ? `${taka(per)} × ${m} months = ${taka(p)} · card available after purchase: ${taka(Math.max(0,avail-p))} (now ${taka(avail)})`
+          : `Card available now: ${taka(avail)}`;
+      }
+    };
+    emiPrincipal.oninput = () => updatePreview(true);
+    emiMonths.oninput = () => updatePreview(true);
+    emiMonthly.oninput = () => updatePreview(false);
+    if(emiCardSel) emiCardSel.onchange = () => updatePreview(false);
+    updatePreview(true);
   }
   // account: toggle credit card fields
   const iscard = document.getElementById("acc-iscard");
